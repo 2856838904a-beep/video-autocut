@@ -141,6 +141,11 @@ def test_tiers(work: str) -> dict:
     # 单段时长上限:short 档不应出现 >20s 的段
     maxdur_s = max((c["dur"] for c in outs["short"]["cuts"]), default=0)
     check("short 档单段 <=20s", maxdur_s <= 20.5, f"最长 {maxdur_s:.1f}s")
+    # 不变量:所有选段都必须有正时长(曾出现 start>end 的负时长段,
+    # 到 cut_clips 静默失败、草稿里少一段却很难发现)
+    for tier, d in outs.items():
+        bad = [c for c in d["cuts"] if c["end"] - c["start"] <= 0.5]
+        check(f"{tier} 档没有非法时长段", not bad, f"{len(bad)} 段")
 
     print("\n[2] 档位应压过品类默认(survival 默认 min15/max120)")
     check("short 档段长下限被收到 4s",

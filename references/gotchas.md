@@ -191,3 +191,24 @@ materials.videos[i].local_material_id  == draft_meta_info.draft_materials[type=0
 - **PowerShell 的 `Set-Content -Encoding UTF8` 会改坏文件编码**(中文变乱码)。改文件用编辑工具,别用 shell 重写。
 - **`pip install torch --index-url .../cu128` 是静默 NO-OP**:已装的 `2.7.1+cpu` 满足无版本约束,pip 认为"已满足"。必须 `--force-reinstall` + 显式 `==2.7.1+cu128`。
 - **download.pytorch.org 只有 0.8 MB/s**(cu128 wheel 有 3.1 GB)。用 `mirror.sjtu.edu.cn/pytorch-wheels/cu128/`,实测 39~45 MB/s。
+
+## 0d. 负时长片段:会静默丢片段(2026-11 影之刃实战)
+
+**现象**:草稿里少了一段,`cut_clips.py` 只在终端打一行 FAIL,不细看根本发现不了。
+
+**根因**:`pick.py` 补边+去重时,同一时间段的两段在补 `--pad` 后重叠,
+把后一段的 `start` 推到前一段的 `end` 之后 —— 若超过自己的 `end`,就得到
+`start > end` 的负时长段。ffmpeg 对负时长直接报错。
+
+**修法**:去重时加一条「`end - start < 1.0` 就丢弃」;`cut_clips.py` 再加一层
+防御(跳过 `dur <= 0.5` 并告警)。**排查时先扫 `dur<=0` 的段**:
+
+```python
+bad = [c for c in cuts if c["end"] - c["start"] <= 0]
+```
+
+## 0e. 稀疏对白素材:whisper 会把句子拉长(同批次发现)
+
+动作游戏只有过场才有台词,whisper 会把一小句台词标记成跨几分钟 ——
+实测「3 个词跨 402 秒」、单句最长 931 秒。不规整会让选段出现 181s/491s 的
+怪物候选。统一走 `transcript.py`(按字数反推时长上界裁剪),别再直接 `json.load`。

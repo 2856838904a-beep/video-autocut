@@ -164,6 +164,14 @@ def main() -> int:
     a = ap.parse_args()
 
     cuts = json.load(open(a.cuts, encoding="utf-8"))["cuts"]
+    # 防御:丢掉非法时长的切点。上游(选段/压节奏)理论上不该产出负时长,
+    # 但一旦出现 ffmpeg 会静默失败,草稿里就少一段且很难发现。
+    bad = [c for c in cuts if float(c["end"]) - float(c["start"]) <= 0.5]
+    if bad:
+        print(f"⚠️  跳过 {len(bad)} 个非法切点(dur<=0.5s):"
+              f"{[(round(c['start'], 1), round(c['end'], 1)) for c in bad[:3]]}",
+              file=sys.stderr)
+        cuts = [c for c in cuts if float(c["end"]) - float(c["start"]) > 0.5]
     if a.limit:
         cuts = cuts[: a.limit]
     os.makedirs(a.dst, exist_ok=True)

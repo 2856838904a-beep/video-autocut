@@ -483,13 +483,22 @@ def main() -> int:
             print("⚠️  去废过滤把全部候选判死(负向维度占比过高),"
                   f"已退化为按分数取前 {len(pick)} 段 —— 请人工核对是否素材本身口误密集")
     pick.sort(key=lambda x: x["start"])
-    for i, s in enumerate(pick):
+    # 补边 + 去重叠。★ 必须丢掉「被前一段完全覆盖」的段:
+    # 测试发现 start 被推到上一段 end 之后,可能超过自己的 end -> 负时长片段,
+    # 这种段到 cut_clips 会静默失败(ffmpeg 报错、草稿里少一段)。
+    deduped: list[dict] = []
+    for s in pick:
         s["start"] = round(max(0.0, s["start"] - pad), 1)
         s["end"] = round(min(total, s["end"] + pad), 1)
+        if deduped and s["start"] < deduped[-1]["end"]:
+            s["start"] = deduped[-1]["end"]
+        if s["end"] - s["start"] < 1.0:
+            continue
         s["dur"] = round(s["end"] - s["start"], 1)
-        if i > 0 and s["start"] < pick[i - 1]["end"]:
-            s["start"] = pick[i - 1]["end"]
-            s["dur"] = round(s["end"] - s["start"], 1)
+        deduped.append(s)
+    if len(deduped) != len(pick):
+        print(f"去重叠:丢弃 {len(pick) - len(deduped)} 段被完全覆盖的片段")
+    pick = deduped
 
     # ---- 空镜候选(仅 vlog 品类) ----
     still = []
