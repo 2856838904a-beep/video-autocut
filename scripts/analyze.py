@@ -147,8 +147,13 @@ def motion_track(video: str, fps: float, hw: bool = False
     """
     逐帧灰度差分 -> (times, motion 0~100, dark 0/1)。
 
-    hw=True 时用 N 卡硬件解码(实测 hevc_cuvid 比软解快 2.6 倍)。
-    注意别用 -hwaccel cuda:那个组合在这里会产出 0 帧。
+    ★ 2026-11 改为**流式读取**(原版 subprocess.run(capture_output=True) 会把整段
+      rawvideo 缓冲进内存:7.7 小时素材在 4fps 下是 1.6 GB 字节流,astype(float32)
+      再翻 4 倍 -> 单进程 6.4 GB。多文件并行时直接换页卡死,CPU 100% 但不出结果。
+      现在按 64 帧一块边读边算,内存恒定在几十 MB。)
+
+    hw=True 时用 N 卡硬件解码。注意:单路硬解通常比软解慢,但多路并行时
+    cuvid 的扩展性更好 —— 实测 45.8 小时素材用「软 3 + 硬 3」混合最快。
     """
     cmd = [FFMPEG, "-hide_banner", "-nostats"]
     if hw:
@@ -161,19 +166,45 @@ def motion_track(video: str, fps: float, hw: bool = False
         "-vf", f"fps={fps},scale={W}:{H}:flags=bilinear,format=gray",
         "-f", "rawvideo", "-pix_fmt", "gray", "-",
     ]
-    proc = subprocess.run(cmd, capture_output=True)
-    buf = np.frombuffer(proc.stdout, dtype=np.uint8)
-    n = len(buf) // (W * H)
-    if n < 2:
-        return np.zeros((0,)), np.zeros((0,)), np.zeros((0,))
-    frames = buf[: n * W * H].reshape(n, H, W).astype(np.float32)
+    frame_bytes = W * H
+    block_frames = 64
+    diffs: list[float] = []
+    lums: list[float] = []
+    prev = None
+    nframes = 0
 
-    # 逐帧平均绝对差分
-    diff = np.abs(np.diff(frames, axis=0)).mean(axis=(1, 2))
-    # 亮度均值 -> 黑场
-    lum = frames.mean(axis=(1, 2))
-    times = (np.arange(1, n) / fps)
-    # 归一化到 0~100:用 95 分位做上界,避免个别闪光把整体压扁
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    try:
+        while True:
+            raw = proc.stdout.read(frame_bytes * block_frames)
+            if not raw:
+                break
+            m = len(raw) // frame_bytes
+            if m <= 0:
+                break
+            block = np.frombuffer(raw[: m * frame_bytes], dtype=np.uint8)
+            block = block.reshape(m, H, W).astype(np.float32)
+            if prev is not None:
+                seq = np.concatenate([prev[None, :, :], block], axis=0)
+            else:
+                seq = block
+            d = np.abs(np.diff(seq, axis=0)).mean(axis=(1, 2))
+            diffs.extend(float(x) for x in d)
+            lums.extend(float(x) for x in block.mean(axis=(1, 2)))
+            prev = block[-1]
+            nframes += m
+    finally:
+        try:
+            proc.stdout.close()
+        except Exception:
+            pass
+        proc.wait()
+
+    if nframes < 2:
+        return np.zeros((0,)), np.zeros((0,)), np.zeros((0,))
+    diff = np.asarray(diffs, dtype=np.float32)
+    lum = np.asarray(lums, dtype=np.float32)
+    times = (np.arange(1, nframes) / fps)
     hi = float(np.percentile(diff, 95)) or 1.0
     motion = np.clip(diff / hi * 60.0, 0, 100)
     dark = (lum[1:] < 12.0).astype(np.float32)
