@@ -142,6 +142,34 @@ def doctor(profile: str, headless: bool, wait_sec: float = 1800) -> int:
     return 0
 
 
+def check_login(profile: str, headless: bool) -> int:
+    """快速检查三个平台的登录态:看上传页有没有文件选择框 / 是否被重定向到登录页。"""
+    from playwright.sync_api import sync_playwright
+    os.makedirs(profile, exist_ok=True)
+    ok = {}
+    with sync_playwright() as pw:
+        ctx = pw.chromium.launch_persistent_context(
+            profile, channel="chrome", headless=headless, locale="zh-CN",
+            args=["--disable-blink-features=AutomationControlled"])
+        page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        for plat, url in UPLOAD_URLS.items():
+            try:
+                page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                time.sleep(5)
+                n = page.locator("input[type=file]").count()
+                cur = page.url
+                logged = n > 0 and "login" not in cur.lower() and "passport" not in cur.lower()
+                ok[plat] = logged
+                print(f"  {plat:<9} {'✅ 已登录(有上传框)' if logged else '❌ 未登录/未到上传页'}  "
+                      f"file输入={n}  url={cur[:70]}")
+            except Exception as e:
+                ok[plat] = False
+                print(f"  {plat:<9} ❌ 检查失败: {e}")
+        ctx.close()
+    print("\n汇总:", {k: ("OK" if v else "NO") for k, v in ok.items()})
+    return 0 if all(ok.values()) else 1
+
+
 def fill_and_upload(page, plat: str, file: str, title: str, desc: str,
                     tags: str, profile: str) -> bool:
     sel = SELECTORS[plat]
@@ -259,10 +287,13 @@ def main() -> int:
     ap.add_argument("--publish", action="store_true", help="真的点发布(默认只填不点)")
     ap.add_argument("--keep", type=float, default=180, help="不发布时浏览器保留秒数")
     ap.add_argument("--doctor", action="store_true", help="打开三个平台页面供登录")
+    ap.add_argument("--check-login", action="store_true", help="检查三个平台登录态")
     ap.add_argument("--wait", type=float, default=1800,
                     help="doctor 模式窗口保留秒数(默认 1800)")
     a = ap.parse_args()
 
+    if a.check_login:
+        return check_login(a.profile, a.headless)
     if a.doctor:
         return doctor(a.profile, a.headless, a.wait)
     if not a.platform:
