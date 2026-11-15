@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 素材与中间产物(仓库只放代码和文档,绝不收媒体文件)
+*.wav
+*.m4a
+*.mp3
+*.mp4
+*.mkv
+*.mov
+*.flv
+*.ts
+*.avi
+*.png
+*.jpg
+*.jpeg
+*.webp
+_audio*/
+_audio_final/
+_clips*/
+_stage*/
+*.chunks/
+work/
+autocut_work/
+
+# 本地产物 / 日志
+*.log
+*.tmp
+.cache/

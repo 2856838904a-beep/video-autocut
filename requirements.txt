@@ -1,0 +1,7 @@
+# video-autocut 运行依赖
+#   numpy          抽轨 / 画面分析 / 选段(硬依赖)
+#   faster-whisper 转写(仅 ③ 转写、② 自动挑轨需要)
+#   torch          仅转写路径需要,且强烈建议装 CUDA 版:
+#                  https://pytorch.org/get-started/locally/
+numpy>=1.24
+faster-whisper>=1.0.0

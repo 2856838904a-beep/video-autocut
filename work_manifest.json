@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "_说明": [
+    "自动剪辑工作产物清理清单。确认一次就固化在这里，下次不用再翻目录。",
+    "语义：每个 root 下，keep 里的 glob 命中的顶层项永不删；remove 里的 glob 命中的顶层项删除。",
+    "keep 优先于 remove —— 两边都命中时保留。脚本会在删之前把冲突报出来。",
+    "新增批次：python cleanup_work.py --scan  自动发现新工作根并登记。",
+    "改完清单先跑 python cleanup_work.py --dry 看体积，再加 --yes 真删。"
+  ],
+  "roots": [
+    {
+      "path": "G:\\autocut_work\\mc",
+      "kind": "MC 生存类批次工作根",
+      "备注": "_game 是游戏原声 wav，重建草稿要用；*.cuts.json 是选段结果，很小且是唯一产出",
+      "keep": ["_game", "*.cuts.json", "*.json"],
+      "remove": ["_clips", "_clips_sep", "*.log"]
+    },
+    {
+      "path": "G:\\autocut_work\\dabiaoge",
+      "kind": "荒野大镖客 3A 故事批次工作根",
+      "备注": "*.game.wav/*.voice.wav 是双轨音频源；转写与选段 json 是唯一产出，必须留；*.chunks 是分块转写中间件，可删",
+      "keep": [
+        "*.game.wav",
+        "*.voice.wav",
+        "*.game.json",
+        "*.voice.json",
+        "*.cutscenes.json",
+        "*.metrics.json",
+        "*.rdr.cuts.json",
+        "*.cuts.json",
+        "*.tracks.json",
+        "_export.json",
+        "_stage2.json",
+        "_summary.json",
+        "voice_quality.json"
+      ],
+      "remove": [
+        "_clips",
+        "_clips2",
+        "_clips_sep",
+        "_stage",
+        "_mixdemo",
+        "_audio",
+        "*.chunks",
+        "*.log"
+      ]
+    },
+    {
+      "path": "G:\\autocut_work\\masters",
+      "kind": "总草稿构建暂存目录",
+      "备注": "成品已装入剪映草稿库，这里只是构建时的暂存副本。删除前脚本会校验剪映库里的素材完整",
+      "keep": [],
+      "remove": ["*"]
+    },
+    {
+      "path": "C:\\Users\\28568\\Desktop\\AI\\WORK\\autocut",
+      "kind": "调试与一次性工作目录",
+      "备注": "_audio_final 是音轨判定结果+双轨音频，重建要用；_draft_backup 是修复前的草稿备份；.py/.json 是分析脚本与结果，体积可忽略但价值高",
+      "keep": [
+        "_audio_final",
+        "_draft_backup",
+        "*.py",
+        "*.json",
+        "*.md",
+        "*.txt"
+      ],
+      "remove": [
+        "_clips_*",
+        "_audio",
+        "_audio_v2",
+        "_audio_v3",
+        "_stage",
+        "_stage_*",
+        "_batch_v2",
+        "_testmix_0131",
+        "_testsep",
+        "wheels",
+        "*.chunks",
+        "_mc1.wav",
+        "_mix_*.m4a",
+        "*.wav",
+        "*.mp4",
+        "*.log"
+      ]
+    }
+  ],
+  "drafts": {
+    "_说明": "剪映草稿库里的草稿。keep 里的永不删；remove 里的移入回收站（remove_draft.py --restore 可恢复）。",
+    "library": "%LOCALAPPDATA%\\JianyingPro\\User Data\\Projects\\com.lveditor.draft",
+    "keep": ["MC全库精华", "RDR全库精华"],
+    "remove": []
+  },
+  "media_check": {
+    "_说明": "删任何东西之前，先校验这些草稿引用的全部素材在磁盘上存在；有缺失就中止，避免删掉唯一副本。",
+    "drafts": ["MC全库精华", "RDR全库精华"]
+  }
+}
