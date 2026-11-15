@@ -64,6 +64,7 @@ pip install -r requirements.txt
 ④ 画面分析        analyze.py --hw             → 前后文/运动/响度/静音
 ⑤ 选段            pick.py --genre <品类> --tier <档位>
 ⑥ 压紧节奏        tighten.py --tier <档位>
+⑥+ 连续剧分集     episodes.py --target-min 13(长素材必用)
 ⑦ 导出片段        cut_clips.py --cuts ... --track N
 ⑧ 生成草稿        make_draft.py               → draft_info.json + _media/
 ⑨ 校验            validate_draft.py           → 三条 ID 链 + 时间线
@@ -71,8 +72,10 @@ pip install -r requirements.txt
 ⑪ 清理中间产物    cleanup_work.py --dry / --yes
 ```
 
+`action` 品类(2026-11 首用影之刃):影之刃的过场是满幅 16:9、没有黑边,`detect_cutscenes.py` 抓不到,所以改用「对白密度≈剧情 / 画面运动≈战斗」双信号互补。
+
 每步的完整命令与参数见 [`references/pipeline.md`](references/pipeline.md)，
-39 个脚本的索引见 [`references/scripts.md`](references/scripts.md)（自动生成），
+40 个脚本的索引见 [`references/scripts.md`](references/scripts.md)（自动生成），
 踩过的坑见 [`references/gotchas.md`](references/gotchas.md)。
 
 ## 成片形态分档
@@ -121,7 +124,7 @@ python scripts/pick.py --transcript t.json --metrics m.json --genre survival --t
 ```
 SKILL.md                 Agent Skill 入口（品类表 / 流程 / 必问三件事）
 README.md
-scripts/                 39 个脚本
+scripts/                 40 个脚本
   paths.py               所有外部路径的唯一解析入口（先跑这个）
   selftest.py            无素材端到端自检（21 项断言）
   tiers.py               ★ 成片形态分档（短/中/长）

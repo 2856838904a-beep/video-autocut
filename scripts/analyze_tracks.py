@@ -56,7 +56,7 @@ def probe_streams(path):
                         "-of", "json", path],
                        capture_output=True, text=True, errors="replace")
     try:
-        j = json.loads(r.stdout)
+        j = paths.parse_probe_json(r.stdout)
     except Exception:
         return None, []
     dur = float(j.get("format", {}).get("duration") or 0)

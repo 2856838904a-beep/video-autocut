@@ -33,7 +33,7 @@ def audio_stream_indices(path: str) -> list[int]:
                         "-show_entries", "stream=index", "-of", "json", path],
                        capture_output=True, text=True, errors="replace")
     try:
-        return [s["index"] for s in json.loads(r.stdout)["streams"]]
+        return [s["index"] for s in paths.parse_probe_json(r.stdout)["streams"]]
     except Exception:
         return []
 

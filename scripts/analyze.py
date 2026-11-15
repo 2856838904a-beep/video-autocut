@@ -47,7 +47,7 @@ def probe_duration(video: str) -> tuple[float, bool]:
                 "format=duration:stream=codec_type", "-of", "json", video])
     dur, has_audio = 0.0, False
     try:
-        j = json.loads(log)
+        j = paths.parse_probe_json(log)
         dur = float(j.get("format", {}).get("duration", 0.0))
         has_audio = any(s.get("codec_type") == "audio" for s in j.get("streams", []))
     except Exception:
@@ -137,7 +137,7 @@ def detect_vcodec(path: str) -> str:
                         "-show_entries", "stream=codec_name", "-of", "json", path],
                        capture_output=True, text=True, errors="replace")
     try:
-        return json.loads(r.stdout)["streams"][0]["codec_name"]
+        return paths.parse_probe_json(r.stdout)["streams"][0]["codec_name"]
     except Exception:
         return ""
 

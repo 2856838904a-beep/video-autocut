@@ -51,7 +51,7 @@ def probe_wh(src: str) -> tuple[int, int, float]:
                         "-show_entries", "format=duration", "-of", "json", src],
                        capture_output=True, text=True, errors="replace")
     try:
-        j = json.loads(r.stdout)
+        j = paths.parse_probe_json(r.stdout)
         st = j["streams"][0]
         return int(st["width"]), int(st["height"]), float(j["format"]["duration"])
     except Exception:

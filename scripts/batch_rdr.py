@@ -58,7 +58,7 @@ def probe(p):
     r = subprocess.run([FFPROBE, "-v", "error", "-show_format", "-show_streams",
                         "-of", "json", p], capture_output=True, text=True, errors="replace")
     try:
-        j = json.loads(r.stdout)
+        j = paths.parse_probe_json(r.stdout)
     except Exception:
         return None
     d = float(j.get("format", {}).get("duration") or 0)

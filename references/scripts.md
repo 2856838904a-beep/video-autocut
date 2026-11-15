@@ -5,7 +5,7 @@
 
 模型加载技能后,`SKILL.md` 给出流程骨架,本文件给出**每个脚本的确切入口**。想看某个脚本的完整参数,直接 `python <脚本> --help`。
 
-共 **39** 个脚本。
+共 **40** 个脚本。
 
 ## 速查表
 
@@ -28,6 +28,7 @@
 | [`pick_visual.py`](#pick-visualpy) | pick_visual.py —— 纯画面选段(无解说素材专用) | `--metrics` `--transcript` `--top` …(+4) |
 | [`rdr_compose.py`](#rdr-composepy) | rdr_compose.py —— 大镖客故事向选段组装器 | `--work` `--file` `--tier` …(+5) |
 | [`tighten.py`](#tightenpy) | tighten.py —— 压缩片段内部的对话空隙(解决"节奏太慢") | `--cuts` `--transcript` `--metrics` …(+7) |
+| [`episodes.py`](#episodespy) | episodes.py —— 把选段切成一集一集的「连续剧」 | `--cuts` `--target-min` `--tolerance-min` …(+4) |
 | [`cut_clips.py`](#cut-clipspy) | cut_clips.py —— 按切点导出片段(视频 + 指定解说音轨) | `--cuts` `--src` `--track` …(+9) |
 | [`mix_audio.py`](#mix-audiopy) | mix_audio.py —— 把「游戏原声」和「解说」两条轨混成一条(两条都要保留) | `--game` `--voice` `--out` …(+7) |
 | [`make_draft.py`](#make-draftpy) | make_draft.py —— 程序化生成剪映专业版草稿(纯明文 JSON,不需要解密) | `--name` `--clip` `--fps` …(+6) |
@@ -266,7 +267,23 @@ tighten.py —— 压缩片段内部的对话空隙(解决"节奏太慢")
 | `--merge-gap` | 两个结果段间隔小于此值时合并 | `0.8` |
 | `--out` |  |  |
 
-## ⑧ 导出片段 / 混音
+## ⑧ 连续剧分集(长素材必用)
+
+### episodes.py
+
+episodes.py —— 把选段切成一集一集的「连续剧」
+
+| 参数 | 说明 | 默认 |
+|---|---|---|
+| `--cuts` | 可多次给:每个素材一个 cuts.json(顺序即播放顺序) |  |
+| `--target-min` |  | `13.0` |
+| `--tolerance-min` |  | `3.0` |
+| `--min-min` | 一集的下限;尾集不足此值会尝试并入上一集 | `6.0` |
+| `--gap-split` | 同一素材内,段间停顿 >= 此值视为自然断点(秒) | `15.0` |
+| `--out-dir` |  |  |
+| `--dry` | 只打印分集计划 | false |
+
+## ⑨ 导出片段 / 混音
 
 ### cut_clips.py
 
@@ -304,7 +321,7 @@ mix_audio.py —— 把「游戏原声」和「解说」两条轨混成一条(�
 | `--target-lufs` | 可选:整体响度归一化目标(EBU R128) |  |
 | `--bitrate` |  | `192k` |
 
-## ⑨ 生成草稿
+## ⑩ 生成草稿
 
 ### make_draft.py
 
@@ -335,7 +352,7 @@ merge_timelines.py —— 把多个单时间线草稿合并成「一个总草稿
 | `--final-root` | 草稿最终位置;给了就按它写路径,方便之后整体搬走 |  |
 | `--dry-run` |  | false |
 
-## ⑩ 校验 / 修复
+## ⑪ 校验 / 修复
 
 ### validate_draft.py
 
@@ -367,7 +384,7 @@ python verify_master.py <草稿目录>
 python fix_audio_track.py <草稿目录> [--dry] [--also-content]
 ```
 
-## ⑪ 装入草稿库
+## ⑫ 装入草稿库
 
 ### install_when_closed.py
 
@@ -400,7 +417,7 @@ remove_draft.py —— 安全删除剪映草稿(可恢复)
 | `--yes` | 跳过确认 | false |
 | `--restore` |  |  |
 
-## ⑫ 清理
+## ⑬ 清理
 
 ### cleanup_work.py
 

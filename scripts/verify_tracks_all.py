@@ -36,7 +36,7 @@ def audio_indices(p):
                         "-show_entries", "stream=index", "-of", "json", p],
                        capture_output=True, text=True, errors="replace")
     try:
-        return [s["index"] for s in json.loads(r.stdout)["streams"]]
+        return [s["index"] for s in paths.parse_probe_json(r.stdout)["streams"]]
     except Exception:
         return []
 
@@ -45,7 +45,7 @@ def duration_of(p):
     r = subprocess.run([FFPROBE, "-v", "error", "-show_entries", "format=duration",
                         "-of", "json", p], capture_output=True, text=True, errors="replace")
     try:
-        return float(json.loads(r.stdout)["format"]["duration"])
+        return float(paths.parse_probe_json(r.stdout)["format"]["duration"])
     except Exception:
         return 0.0
 
@@ -101,7 +101,7 @@ def sample(p, ai, dur, seconds, dst):
     r = subprocess.run([FFPROBE, "-v", "error", "-show_entries", "format=duration",
                         "-of", "json", dst], capture_output=True, text=True, errors="replace")
     try:
-        return float(json.loads(r.stdout)["format"]["duration"])
+        return float(paths.parse_probe_json(r.stdout)["format"]["duration"])
     except Exception:
         return 0.0
 

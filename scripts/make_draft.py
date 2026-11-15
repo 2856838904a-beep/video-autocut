@@ -89,7 +89,7 @@ def probe(path: str) -> dict:
         capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     try:
-        j = json.loads(r.stdout)
+        j = paths.parse_probe_json(r.stdout)
     except Exception:
         return {}
     streams = j.get("streams") or []
@@ -140,7 +140,7 @@ def probe_audio(path: str) -> dict:
          "-of", "json", path],
         capture_output=True, text=True, encoding="utf-8", errors="replace")
     try:
-        d = float(json.loads(r.stdout)["format"]["duration"])
+        d = float(paths.parse_probe_json(r.stdout)["format"]["duration"])
     except Exception:
         return {}
     if d <= 0:

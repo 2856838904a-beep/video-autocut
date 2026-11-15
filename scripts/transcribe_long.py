@@ -42,7 +42,7 @@ def duration_of(p: str) -> float:
                         "-of", "json", p],
                        capture_output=True, text=True, errors="replace")
     try:
-        return float(json.loads(r.stdout)["format"]["duration"])
+        return float(paths.parse_probe_json(r.stdout)["format"]["duration"])
     except Exception:
         return 0.0
 

@@ -174,7 +174,7 @@ def main() -> int:
                             "-v", "error", "-select_streams", "a",
                             "-show_entries", "stream=index", "-of", "json", a.src],
                            capture_output=True, text=True, errors="replace")
-        idxs = [s["index"] for s in json.loads(r.stdout)["streams"]]
+        idxs = [s["index"] for s in paths.parse_probe_json(r.stdout)["streams"]]
         if a.track not in idxs:
             print(f"音轨 {a.track} 不在 {idxs} 里", file=sys.stderr)
             return 2

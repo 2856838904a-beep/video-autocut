@@ -30,8 +30,10 @@ paths.py —— 集中解析技能运行所需的外部路径
 from __future__ import annotations
 
 import glob
+import json
 import os
 import shutil
+import subprocess
 import sys
 
 # --------------------------------------------------------------------------
@@ -231,6 +233,72 @@ def report() -> int:
     print("结论:" + ("全部就绪 ✅" if ok else "有缺失 ❌ —— 见上面 ❌ 行"))
     print("=" * 74)
     return 0 if ok else 1
+
+
+# --------------------------------------------------------------------------
+# ffprobe JSON 容错解析（2026-11 实测踩坑）
+#
+# 部分 OBS 录制的 MKV 把 Windows 路径写进 metadata,ffprobe 输出的 JSON 会带
+# **非法转义**(如 `"comment": "G:\录像\..."` 里的 `\录`),标准 json.loads
+# 直接抛 JSONDecodeError。
+#
+# 以前 11 个脚本各自 json.loads 且各自 try/except,遇到这类文件全部**静默降级**:
+# 时长变 0、音轨列表变空。实测算例:某素材库 12 个文件 100% 解析失败,
+# 被误判成"没有音轨",整条流水线第一步就走不下去。
+#
+# 现在统一走 parse_probe_json:先严格解析,失败则修补非法转义后重试。
+# --------------------------------------------------------------------------
+_VALID_ESC = set('"\\/bfnrt')
+_HEX = set("0123456789abcdefABCDEF")
+
+
+def _fix_json_escapes(text: str) -> str:
+    """把 ffprobe 输出里非法的反斜杠转义补成合法转义。
+
+    实测算例:`"filename": "G:\\录像\\...\\2026-11-08-10-31-03.mkv"` ——
+    中文路径被 ffprobe 转成乱码后,分隔符 `\\` 后面紧跟数字,而 JSON 里
+    `\\2` 是非法转义,标准 json.loads 直接报 "Invalid \\escape"。
+
+    用状态机逐字符判定:合法转义(\\" \\\\ \\/ \\b \\f \\n \\r \\t \\uXXXX)原样保留,
+    其余一律补成 `\\\\`。比正则可靠 —— 连续反斜杠时正则的 lookahead 会漏判。
+    """
+    out, i, n = [], 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "\\":
+            if i + 1 < n and text[i + 1] in _VALID_ESC:
+                out.append(text[i:i + 2])
+                i += 2
+                continue
+            if (i + 5 < n and text[i + 1] == "u"
+                    and all(h in _HEX for h in text[i + 2:i + 6])):
+                out.append(text[i:i + 6])
+                i += 6
+                continue
+            out.append("\\\\")        # 非法转义:补一个反斜杠
+            i += 1
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def parse_probe_json(text: str) -> dict:
+    """容错解析 ffprobe 的 JSON 输出(见上文说明)。"""
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return json.loads(_fix_json_escapes(text))
+
+
+def probe_json(*args: str) -> dict:
+    """跑 ffprobe 并返回容错解析后的 dict。
+
+    用法: probe_json("-show_streams", "-show_format", path)
+    """
+    r = subprocess.run([ffprobe(), "-v", "error", *args, "-of", "json"],
+                       capture_output=True, text=True, errors="replace")
+    return parse_probe_json(r.stdout)
 
 
 if __name__ == "__main__":
