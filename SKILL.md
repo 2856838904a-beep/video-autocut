@@ -320,11 +320,11 @@ whisper 在**稀疏对白**素材上会把句子拉长 —— 实测影之刃有
 
 每步的完整命令与参数见 `references/pipeline.md`,踩过的坑见 `references/gotchas.md`。
 
-**要调具体某个脚本前,先查 `references/scripts.md`** —— 那是全部 46 个脚本的
+**要调具体某个脚本前,先查 `references/scripts.md`** —— 那是全部 48 个脚本的
 自动生成索引(一句话说明 + 主要参数 + 分阶段归类),由 `gen_script_index.py`
 从源码静态抽取,不会和代码脱节。想看某脚本的完整参数就 `python <脚本> --help`。
 
-> 为什么需要它:SKILL.md 只有十几 KB,覆盖不了 46 个脚本的 CLI。没有索引时,
+> 为什么需要它:SKILL.md 只有十几 KB,覆盖不了 48 个脚本的 CLI。没有索引时,
 > 模型只能靠猜参数,或退化成"只用 SKILL.md 里出现过的那几个脚本"。
 > 实测这份索引补上之前,**有 15 个脚本在任何文档里都没被提到过**
 > (含 `analyze_tracks.py`「标准第一步」、`classify_voice.py`、`mix_audio.py`)。
@@ -395,6 +395,45 @@ python cleanup_work.py --verify-only # 只校验素材完整性
 **校验不能只查数据**:`validate_draft.py` 只证明 ID 链和三方时间线自洽,**证明不了剪映会渲染它**。加/改轨道后,若条件允许,应让用户实际打开确认;拿到"没有两条轨道"这类反馈时,先按 `gotchas.md` 0c 的清单 diff 剪映自己草稿的结构,不要先怀疑用户看错了。
 
 草稿格式的全部细节与实测结论见 `references/jianying-draft.md`。
+
+## 成片导出与发布(交付链路)
+
+**裁剪清单 → 成片 mp4 → 平台适配版本**,全程不依赖剪映导出。
+
+⚠️ **剪映没有可用的导出 CLI**:自带 `jianying-agent-cli-tests.exe` 只有
+`draft edit / extract / apply-patch / validate-patch`,没有 export;GUI 导出无法可靠自动化。
+所以成片由 `export_final.py` 从**同一份选段清单**直接渲染 —— 批量、可复现、参数可控。
+代价:不带你在剪映里手动加的转场/文字(改过就用 `--source files` 让脚本只做响度与平台适配)。
+
+```bash
+# 渲染:默认输出到 <素材目录>/_autocut_export/<时间戳>/
+python scripts/export_final.py --episodes work/episodes.json \
+       --src-dir "G:\录像\影之刃" \
+       --preset douyin,bilibili,youtube,archive
+
+# 发布清单(半自动:生成标题/简介/标签 + 平台规格校验)
+python scripts/publish.py --manifest "G:\录像\...\manifest.json" [--open]
+```
+
+平台预设与响度(实测标定,不是拍脑袋):
+
+| 预设 | 分辨率 | 帧率 | 码率 | 响度 | 实测落地 |
+|---|---|---|---|---|---|
+| douyin | 1080x1920 竖屏(模糊背景填充) | 30 | 8 Mbps | 目标 I=-13 | **-13.9 LUFS / -1.1 dBTP** |
+| bilibili | 1920x1080 | 60 | 10 Mbps | 同上 | -13.9 LUFS / -1.1 dBTP |
+| youtube | 1920x1080 | 60 | 12 Mbps | 同上 | -13.9 LUFS / -1.1 dBTP |
+| archive | 源分辨率 | 源 | HEVC cq20 | I=-15 | -15.4 LUFS / -1.5 dBTP |
+
+**响度必须是"两遍法 + 限幅"**(踩坑记录):
+- `loudnorm` 不传 `measured_*` 会走动态模式;传了但**漏掉 `offset`** 线性模式不生效
+- `alimiter` 的 `level` 选项**默认 true**(自动电平),会整体再抬 2~3 dB —— 实测输出从 -14 变成
+  -11.8 LUFS、真峰 +1.5 dBFS,越修越响。必须写 `level=false`
+- AAC 编码会让真峰比样本峰高 1~2 dB,所以按目标 TP 再留 1.5~2 dB 余量 + 限幅器兜底
+
+**上传能力边界(诚实说明)**:
+- 全自动上传需要**平台开放平台授权**(B站/抖音/YouTube API)或带登录态的浏览器自动化;
+  本机目前两者都没有,`publish.py` 默认做「元数据 + 规格校验 + 打开上传页」的**半自动**
+- 凭据配置放 `<技能根>/publish_credentials.json`(勿提交),`publish.py --check-credentials` 可查
 
 ## 必须先问用户的三件事
 

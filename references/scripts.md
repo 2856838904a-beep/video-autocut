@@ -5,7 +5,7 @@
 
 模型加载技能后,`SKILL.md` 给出流程骨架,本文件给出**每个脚本的确切入口**。想看某个脚本的完整参数,直接 `python <脚本> --help`。
 
-共 **46** 个脚本。
+共 **48** 个脚本。
 
 ## 速查表
 
@@ -45,6 +45,8 @@
 | [`install_when_closed.py`](#install-when-closedpy) | install_when_closed.py —— 等剪映主程序退出后自动安装草稿 | `--timeout` `--poll` |
 | [`install_testdraft.py`](#install-testdraftpy) | 把暂存草稿安装进剪映草稿库。 | — |
 | [`remove_draft.py`](#remove-draftpy) | remove_draft.py —— 安全删除剪映草稿(可恢复) | `--list` `--name` `--pattern` …(+2) |
+| [`export_final.py`](#export-finalpy) | export_final.py | `--episodes` `--source` `--input` …(+6) |
+| [`publish.py`](#publishpy) | publish.py —— 成片发布:元数据生成 + 半自动上传 + 平台 API 适配器接口 | `--manifest` `--open` `--platform` …(+2) |
 | [`cleanup_work.py`](#cleanup-workpy) | 按 work_manifest.json 清理自动剪辑中间产物 | `--dry` `--yes` `--scan` …(+2) |
 | [`show_transcript.py`](#show-transcriptpy) | show_transcript.py —— 人肉抽查转写结果(判断解说轨是不是挑错了) | — |
 | [`per_track.py`](#per-trackpy) | per_track.py —— 逐条音轨分析(关键修正) | — |
@@ -511,7 +513,37 @@ remove_draft.py —— 安全删除剪映草稿(可恢复)
 | `--yes` | 跳过确认 | false |
 | `--restore` |  |  |
 
-## ⑬ 清理
+## ⑬ 发布:成片渲染(响度/平台适配) + 上传清单
+
+### export_final.py
+
+export_final.py
+
+| 参数 | 说明 | 默认 |
+|---|---|---|
+| `--episodes` | episodes.json(推荐) |  |
+| `--source` |  | `cuts` |
+| `--input` | source=files 时的输入 mp4 |  |
+| `--preset` |  | `douyin,bilibili,youtube,archive` |
+| `--only` | 只做某几集,如 1,2 | `` |
+| `--src-dir` | 原始录像目录(默认取环境变量 AUTOCUT_SRC_DIR) |  |
+| `--out-root` | 默认 <素材目录>/_autocut_export/<时间戳>/ |  |
+| `--loudnorm` |  | `linear` |
+| `--dry-run` |  | false |
+
+### publish.py
+
+publish.py —— 成片发布:元数据生成 + 半自动上传 + 平台 API 适配器接口
+
+| 参数 | 说明 | 默认 |
+|---|---|---|
+| `--manifest` |  |  |
+| `--open` | 打开各平台上传页 | false |
+| `--platform` | 只处理某平台 | `` |
+| `--api` | 走开放平台 API(需凭据) | false |
+| `--check-credentials` |  | false |
+
+## ⑭ 清理
 
 ### cleanup_work.py
 
