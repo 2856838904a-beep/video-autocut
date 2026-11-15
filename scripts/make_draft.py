@@ -329,6 +329,18 @@ def build(name: str, clips: list[dict], fps: float, out_root: str,
     建一条**独立的音频轨片段** —— 视频轨只含游戏原声,解说单独一条轨,
     剪映里可分别调音量/静音。这是用户明确要求的形态。
     """
+    # ★ 防护:--final-root 必须是草稿库**根**,不能是草稿文件夹本身。
+    #   传成「根/名字」会让 path_folder 变成 根/名字/名字,素材路径全部指向
+    #   不存在的目录 —— 剪映里表现为"媒体丢失",且很难看出原因。
+    #   (2026-11 影之刃批次实际踩过:6 个草稿 136~226 条素材路径全部不可达)
+    if final_root:
+        fr = os.path.normpath(final_root)
+        if os.path.basename(fr) == name:
+            raise SystemExit(
+                f"--final-root 应该传草稿库根目录,而不是草稿文件夹本身。\n"
+                f"  收到: {final_root}\n"
+                f"  应传: {os.path.dirname(fr)}\n"
+                f"(脚本会自动在根目录下拼 /{name})")
     path_root = final_root or out_root
     skel = load_skeleton()
     ref = load_reference()
@@ -634,8 +646,9 @@ def main() -> int:
     ap.add_argument("--media-src", default=None,
                     help="素材的原始位置(单个文件路径)。生成到暂存目录时会用到")
     ap.add_argument("--final-root", default=None,
-                    help="草稿最终要放的位置。先在暂存区生成、之后整体搬进草稿库时,"
-                         "用它可以一次写对路径,避免事后替换字符串")
+                    help="草稿库**根目录**(不是草稿文件夹本身)。脚本会自动在其下拼 "
+                         "<--name>。先在暂存区生成、之后整体搬进草稿库时用它一次写对路径。"
+                         "例:--out-root D:\\tmp --final-root <剪映草稿库根>")
     ap.add_argument("--extra-audio", action="append", default=[],
                     help="额外的音频参考轨,格式 起始秒|文件|显示名(起始秒可省,默认 0)。"
                          "用于把音量很小的解说轨单独铺一条轨作参考,不混入主音轨")
