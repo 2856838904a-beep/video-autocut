@@ -49,11 +49,16 @@ def load_cuts(path: str) -> list[dict]:
            .replace(".cuts.json", "").replace(".json", ""))
     out = []
     for c in cuts:
-        out.append({"src": c.get("src") or src,
-                    "start": float(c["start"]), "end": float(c["end"]),
-                    "dur": float(c.get("dur") or (c["end"] - c["start"])),
-                    "score": c.get("score", 0.0),
-                    "text": c.get("text", "")})
+        # ★ 透传其余字段(speechless / kind / dims …):
+        #   早期版本只挑固定几个键,把上游标记丢了 —— 下游就没法区分
+        #   "纯战斗段" 和 "有对白的段",也丢了 story 流程的 kind。
+        d = dict(c)
+        d.update({"src": c.get("src") or src,
+                  "start": float(c["start"]), "end": float(c["end"]),
+                  "dur": float(c.get("dur") or (c["end"] - c["start"])),
+                  "score": c.get("score", 0.0),
+                  "text": c.get("text", "")})
+        out.append(d)
     return out
 
 
