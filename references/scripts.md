@@ -5,7 +5,7 @@
 
 模型加载技能后,`SKILL.md` 给出流程骨架,本文件给出**每个脚本的确切入口**。想看某个脚本的完整参数,直接 `python <脚本> --help`。
 
-共 **48** 个脚本。
+共 **49** 个脚本。
 
 ## 速查表
 
@@ -47,6 +47,7 @@
 | [`remove_draft.py`](#remove-draftpy) | remove_draft.py —— 安全删除剪映草稿(可恢复) | `--list` `--name` `--pattern` …(+2) |
 | [`export_final.py`](#export-finalpy) | export_final.py | `--episodes` `--source` `--input` …(+6) |
 | [`publish.py`](#publishpy) | publish.py —— 成片发布:元数据生成 + 半自动上传 + 平台 API 适配器接口 | `--manifest` `--open` `--platform` …(+2) |
+| [`publish_browser.py`](#publish-browserpy) | publish_browser.py —— 用浏览器自动化把成片投到各平台(Playwright + 本机 Chrome) | `--platform` `--file` `--title` …(+9) |
 | [`cleanup_work.py`](#cleanup-workpy) | 按 work_manifest.json 清理自动剪辑中间产物 | `--dry` `--yes` `--scan` …(+2) |
 | [`show_transcript.py`](#show-transcriptpy) | show_transcript.py —— 人肉抽查转写结果(判断解说轨是不是挑错了) | — |
 | [`per_track.py`](#per-trackpy) | per_track.py —— 逐条音轨分析(关键修正) | — |
@@ -542,6 +543,25 @@ publish.py —— 成片发布:元数据生成 + 半自动上传 + 平台 API �
 | `--platform` | 只处理某平台 | `` |
 | `--api` | 走开放平台 API(需凭据) | false |
 | `--check-credentials` |  | false |
+
+### publish_browser.py
+
+publish_browser.py —— 用浏览器自动化把成片投到各平台(Playwright + 本机 Chrome)
+
+| 参数 | 说明 | 默认 |
+|---|---|---|
+| `--platform` |  |  |
+| `--file` |  |  |
+| `--title` |  | `` |
+| `--desc` |  | `` |
+| `--tags` |  | `` |
+| `--manifest` | 按 manifest 批量投某平台(从文件名推标题) |  |
+| `--profile` |  |  |
+| `--headless` |  | false |
+| `--publish` | 真的点发布(默认只填不点) | false |
+| `--keep` | 不发布时浏览器保留秒数 | `180` |
+| `--doctor` | 打开三个平台页面供登录 | false |
+| `--wait` | doctor 模式窗口保留秒数(默认 1800) | `1800` |
 
 ## ⑭ 清理
 

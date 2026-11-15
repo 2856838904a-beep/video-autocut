@@ -65,7 +65,7 @@ STAGES = [
     ("⑫ 装入草稿库", ["install_when_closed.py", "install_testdraft.py",
                       "remove_draft.py"]),
     ("⑬ 发布:成片渲染(响度/平台适配) + 上传清单",
-     ["export_final.py", "publish.py"]),
+     ["export_final.py", "publish.py", "publish_browser.py"]),
     ("⑭ 清理", ["cleanup_work.py"]),
     ("辅助工具(查看中间结果)",
      ["show_transcript.py", "per_track.py"]),
