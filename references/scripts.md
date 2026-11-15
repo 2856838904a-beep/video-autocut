@@ -5,7 +5,7 @@
 
 模型加载技能后,`SKILL.md` 给出流程骨架,本文件给出**每个脚本的确切入口**。想看某个脚本的完整参数,直接 `python <脚本> --help`。
 
-共 **43** 个脚本。
+共 **44** 个脚本。
 
 ## 速查表
 
@@ -23,11 +23,12 @@
 | [`transcribe_long.py`](#transcribe-longpy) | transcribe_long.py —— 长素材分块转写(解决 6 小时音频一次性转写 MemoryError) | `--out` `--chunk-min` `--model` …(+4) |
 | [`tiers.py`](#tierspy) | tiers.py —— 成片形态分档(短视频 / 中视频 / 长视频)的唯一参数源 | — |
 | [`transcript.py`](#transcriptpy) | transcript.py —— 文稿加载 + 时间轴规整(所有选段类脚本的唯一入口) | — |
+| [`subtitle_ocr.py`](#subtitle-ocrpy) | subtitle_ocr.py —— 画面内字幕抽取(把"剧情对白"变成可靠的一等信号) | `--src` `--transcript` `--out` …(+4) |
 | [`analyze.py`](#analyzepy) | analyze.py —— 长素材技术质量分析(无需 GPU、无需转写) | `--out` `--window` `--fps` …(+3) |
 | [`detect_cutscenes.py`](#detect-cutscenespy) | detect_cutscenes.py —— 检测过场动画区间(单机 3A 故事剪辑的核心信号) | `--src` `--fps` `--min` …(+3) |
 | [`pick.py`](#pickpy) | pick.py —— 统一选段器(品类通过 --genre 切换,不再每个品类一个脚本) | `--transcript` `--metrics` `--genre` …(+13) |
 | [`pick_visual.py`](#pick-visualpy) | pick_visual.py —— 纯画面选段(无解说素材专用) | `--metrics` `--transcript` `--top` …(+4) |
-| [`beats.py`](#beatspy) | beats.py —— 按「剧情 / 情绪推进」切分叙事节拍(不按固定时长) | `--cuts` `--metrics` `--transcript` …(+8) |
+| [`beats.py`](#beatspy) | beats.py —— 按「剧情 / 情绪推进」切分叙事节拍(不按固定时长) | `--cuts` `--metrics` `--transcript` …(+11) |
 | [`continuous.py`](#continuouspy) | continuous.py —— 把「碎片化选段」重建成「连续块」(解决观感"剪得碎、不连贯") | `--cuts` `--metrics` `--min-block` …(+6) |
 | [`rdr_compose.py`](#rdr-composepy) | rdr_compose.py —— 大镖客故事向选段组装器 | `--work` `--file` `--tier` …(+5) |
 | [`tighten.py`](#tightenpy) | tighten.py —— 压缩片段内部的对话空隙(解决"节奏太慢") | `--cuts` `--transcript` `--metrics` …(+7) |
@@ -178,6 +179,22 @@ transcript.py —— 文稿加载 + 时间轴规整(所有选段类脚本的唯�
 (无命令行参数 —— 作为模块被其它脚本 import,
 或直接运行执行固定动作)
 
+## ⑥ 字幕 OCR(剧情对白的可靠信号)
+
+### subtitle_ocr.py
+
+subtitle_ocr.py —— 画面内字幕抽取(把"剧情对白"变成可靠的一等信号)
+
+| 参数 | 说明 | 默认 |
+|---|---|---|
+| `--src` |  |  |
+| `--transcript` |  |  |
+| `--out` |  |  |
+| `--fps` |  | `0.5` |
+| `--band` |  |  |
+| `--pad` |  | `12.0` |
+| `--max-window` | 单个 OCR 区间最长秒数(过长会切片,避免抽帧太多) | `240.0` |
+
 ## ⑥ 画面分析 / 选段 / 组装
 
 ### analyze.py
@@ -255,6 +272,9 @@ beats.py —— 按「剧情 / 情绪推进」切分叙事节拍(不按固定时
 | `--genre` |  | `action` |
 | `--pause` | 对白停顿 >= 此值算节拍边界 | `2.0` |
 | `--rest` | 张力连续低于 p30 达此秒数算节拍边界(战斗结束) | `5.0` |
+| `--dlg-gap` | 台词间隔 <= 此值算同一场对话 | `8.0` |
+| `--dlg-density` | 对白场景内语音占比下限(排除零星台词) | `0.45` |
+| `--dlg-min` | 对白场景最短秒数 | `25.0` |
 | `--min-beat` |  | `20.0` |
 | `--max-beat` |  | `300.0` |
 | `--merge-gap` | 相邻入选节拍间隔 <= 此值时连成一段 | `6.0` |

@@ -5,3 +5,7 @@
 #                  https://pytorch.org/get-started/locally/
 numpy>=1.24
 faster-whisper>=1.0.0
+
+# 可选：画面内字幕 OCR（subtitle_ocr.py）
+#   剧情向素材强烈建议装 —— whisper 在安静对白上错字多，错字会拖低打分
+rapidocr-onnxruntime>=1.3

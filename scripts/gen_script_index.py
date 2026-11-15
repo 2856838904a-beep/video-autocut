@@ -48,6 +48,7 @@ STAGES = [
     ("④ GPU 转写", ["transcribe_long.py"]),
     ("⑤ 选段前置:成片分档 + 文稿时间轴规整",
      ["tiers.py", "transcript.py"]),
+    ("⑥ 字幕 OCR(剧情对白的可靠信号)", ["subtitle_ocr.py"]),
     ("⑥ 画面分析 / 选段 / 组装",
      ["analyze.py", "detect_cutscenes.py", "pick.py", "pick_visual.py",
       "beats.py", "continuous.py", "rdr_compose.py"]),

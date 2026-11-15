@@ -83,6 +83,11 @@ def main() -> int:
     ap.add_argument("--pause", type=float, default=2.0, help="对白停顿 >= 此值算节拍边界")
     ap.add_argument("--rest", type=float, default=5.0,
                     help="张力连续低于 p30 达此秒数算节拍边界(战斗结束)")
+    ap.add_argument("--dlg-gap", type=float, default=8.0,
+                    help="台词间隔 <= 此值算同一场对话")
+    ap.add_argument("--dlg-density", type=float, default=0.45,
+                    help="对白场景内语音占比下限(排除零星台词)")
+    ap.add_argument("--dlg-min", type=float, default=25.0, help="对白场景最短秒数")
     ap.add_argument("--min-beat", type=float, default=20.0)
     ap.add_argument("--max-beat", type=float, default=300.0)
     ap.add_argument("--merge-gap", type=float, default=6.0,
@@ -126,6 +131,53 @@ def main() -> int:
         if gap >= a.pause:
             boundaries.add(int((segs[i - 1]["end"] + segs[i]["start"]) / 2))
     boundaries = sorted({b for b in boundaries if 0 <= b <= total})
+
+    # ---- 1b) 剧情对白场景(2026-11 新增) ----
+    # 为什么要单独检测:动作游戏的剧情对白**没有战斗张力**,按"分数选高光"会整段漏掉。
+    # 实测算例:一段 78 秒连续对白(55:49–57:59)没能进入任何一集。
+    # 判据只用"说话密度"(whisper 检测说话是准的,文本错不影响):
+    #   相邻台词间隔 <= --dlg-gap,连续成串,串内语音占比 >= --dlg-density
+    dialogue_scenes = []
+    if segs:
+        cur = [segs[0]]
+        for i in range(1, len(segs)):
+            gap = segs[i]["start"] - segs[i - 1]["end"]
+            if gap <= a.dlg_gap:
+                cur.append(segs[i])
+            else:
+                dialogue_scenes.append(cur)
+                cur = [segs[i]]
+        dialogue_scenes.append(cur)
+        scenes = []
+        for run_ in dialogue_scenes:
+            t0, t1 = run_[0]["start"], run_[-1]["end"]
+            span = t1 - t0
+            speech = sum(x["end"] - x["start"] for x in run_)
+            if span < a.dlg_min:
+                continue
+            if speech / max(span, 1e-6) < a.dlg_density:
+                continue
+            scenes.append({"start": round(max(0.0, t0 - 4.0), 1),
+                           "end": round(min(total, t1 + 4.0), 1),
+                           "kind": "dialogue", "n_lines": len(run_),
+                           "speech_ratio": round(speech / span, 2)})
+        # 超长场景按 max-beat 切(在台词停顿最大处切)
+        split_scenes = []
+        for sc in scenes:
+            if sc["end"] - sc["start"] <= a.max_beat:
+                split_scenes.append(sc)
+                continue
+            n_ch = int((sc["end"] - sc["start"]) // a.max_beat) + 1
+            step = (sc["end"] - sc["start"]) / n_ch
+            for k in range(n_ch):
+                s0 = sc["start"] + k * step
+                s1 = min(sc["end"], s0 + step)
+                if s1 - s0 >= a.min_beat:
+                    split_scenes.append({**sc, "start": round(s0, 1), "end": round(s1, 1)})
+        print(f"剧情对白场景 {len(split_scenes)} 个 / "
+              f"{sum(x['end']-x['start'] for x in split_scenes)/60:.1f} 分钟")
+    else:
+        split_scenes = []
     print(f"素材 {fmt(total)}   台词 {len(segs)} 句   节拍边界 {len(boundaries)} 个 "
           f"(张力回落 {sum(1 for r in rests if len(r) * win >= a.rest)} + 对白停顿)")
 
@@ -185,11 +237,26 @@ def main() -> int:
         val = sum(v for v in dims.values() if v > 0)
         # 长节拍按分钟归一,避免"越长越赢"
         minutes = max(1.0, (t1 - t0) / 60.0)
-        score = (val / minutes) * 1.0 + peak * 0.05 + rise * 0.08 + b["seed_score"] * 0.5
+        if b.get("kind") == "dialogue":
+            # 剧情对白:不看张力,看"信息/叙事推进"——台词条数、字数、叙事维度
+            line_rate = (b.get("n_lines") or 0) / minutes
+            score = (val / minutes) * 1.6 + line_rate * 0.8 + b["seed_score"] * 0.3
+        else:
+            score = (val / minutes) * 1.0 + peak * 0.05 + rise * 0.08 + b["seed_score"] * 0.5
         b.update({"dims": dims, "text": txt[:200], "chars": len(txt),
                   "peak_tension": round(peak, 1), "avg_tension": round(avg, 1),
                   "rise": round(rise, 1), "score": round(score, 2)})
         return b
+
+    # 把剧情对白场景也作为候选节拍(它们不是从"热点种子"来的,是独立检测的)
+    for sc in split_scenes:
+        beats.append({"start": sc["start"], "end": sc["end"],
+                      "dur": round(sc["end"] - sc["start"], 1),
+                      "seed_score": 0.0, "text": "", "kind": "dialogue",
+                      "n_lines": sc.get("n_lines", 0),
+                      "speech_ratio": sc.get("speech_ratio", 0.0)})
+    for b in beats:
+        b.setdefault("kind", "combat")
 
     beats = [score_beat(b) for b in beats]
     print(f"候选节拍 {len(beats)} 个,时长 中位 "
@@ -210,7 +277,10 @@ def main() -> int:
     chosen.sort(key=lambda b: b["start"])
     merged: list[dict] = []
     for b in chosen:
-        if merged and b["start"] - merged[-1]["end"] <= a.merge_gap:
+        # ★ 只合并同类型:剧情对白和战斗混在一起合并,会让对白场景被吞进战斗段
+        #   (kind 取前者),实测一段 86 秒连续对白就这样消失了。
+        if (merged and merged[-1].get("kind") == b.get("kind")
+                and b["start"] - merged[-1]["end"] <= a.merge_gap):
             m = merged[-1]
             m["end"] = max(m["end"], b["end"])
             m["dur"] = round(m["end"] - m["start"], 1)
@@ -237,8 +307,8 @@ def main() -> int:
                    "params": {"pause": a.pause, "rest": a.rest,
                               "min_beat": a.min_beat, "max_beat": a.max_beat,
                               "merge_gap": a.merge_gap, "budget_sec": a.budget_sec},
-                   "cuts": [{**{k: v for k, v in b.items()}, "text": b.get("text", "")}
-                            for b in merged]}, f, ensure_ascii=False, indent=1)
+                   "cuts": [dict(b) for b in merged]},
+                  f, ensure_ascii=False, indent=1)
     print(f"-> {op}")
     return 0
 

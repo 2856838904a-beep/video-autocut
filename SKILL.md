@@ -109,6 +109,27 @@ python scripts/continuous.py --cuts a.cuts.json --metrics a.metrics.json        
 **验收判据**(别再只看总时长):一集的片段数、中位段长、段间跳变数。经验值:
 每集 6~14 段、中位段长 60~180 秒、跳变处数 ≈ 段数-1 才算"能连着看"。
 
+### 剧情对白:说话密度 + 画面字幕 OCR(2026-11 二次修正)
+
+用户二次反馈「密集的剧情对话切得不够好」。查出两层原因:
+
+1. **漏选**:动作游戏的剧情对白**没有战斗张力**,按分数排会被战斗挤掉 —— 实测一段
+   78 秒连续对白(55:49–57:59)没进任何一集。修法:`beats.py` 增加「剧情对白场景」
+   (台词间隔 ≤8s 连成串、语音占比 ≥45%、时长 ≥25s),并**按类型分配额**
+   (`DLG_SHARE`,默认 55% 剧情 / 45% 战斗)。
+2. **文本不可靠**:whisper 在安静对白上错字严重(「所谓正邪」→「所谓政协」),
+   错字会拖低词典打分。修法:`subtitle_ocr.py` 用**画面内字幕 OCR**(RapidOCR)
+   取干净文本与精确时间轴。为控成本,**先按说话密度圈定疑似对白区间再 OCR**
+   (全片 OCR 要 11 小时;圈定后只占 15~30%)。
+
+```bash
+python scripts/subtitle_ocr.py --src a.mkv --transcript a.json --fps 0.5 \
+       --out a.subs.json      # 输出对白段:start/end/text/lines
+```
+
+> 调研与选型(镜头边界 PySceneDetect / TransNetV2、叙事分段 TextTiling、音频事件 YAMNet)
+> 见 `references/approaches.md`。
+
 ## 节奏控制(最常被投诉的问题)
 
 选段为保完整性会保留大量停顿 —— **实测静音占比 49~83%**。用 `tighten.py` 压,
@@ -277,11 +298,11 @@ whisper 在**稀疏对白**素材上会把句子拉长 —— 实测影之刃有
 
 每步的完整命令与参数见 `references/pipeline.md`,踩过的坑见 `references/gotchas.md`。
 
-**要调具体某个脚本前,先查 `references/scripts.md`** —— 那是全部 43 个脚本的
+**要调具体某个脚本前,先查 `references/scripts.md`** —— 那是全部 44 个脚本的
 自动生成索引(一句话说明 + 主要参数 + 分阶段归类),由 `gen_script_index.py`
 从源码静态抽取,不会和代码脱节。想看某脚本的完整参数就 `python <脚本> --help`。
 
-> 为什么需要它:SKILL.md 只有十几 KB,覆盖不了 43 个脚本的 CLI。没有索引时,
+> 为什么需要它:SKILL.md 只有十几 KB,覆盖不了 44 个脚本的 CLI。没有索引时,
 > 模型只能靠猜参数,或退化成"只用 SKILL.md 里出现过的那几个脚本"。
 > 实测这份索引补上之前,**有 15 个脚本在任何文档里都没被提到过**
 > (含 `analyze_tracks.py`「标准第一步」、`classify_voice.py`、`mix_audio.py`)。
