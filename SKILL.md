@@ -130,6 +130,28 @@ python scripts/subtitle_ocr.py --src a.mkv --transcript a.json --fps 0.5 \
 > 调研与选型(镜头边界 PySceneDetect / TransNetV2、叙事分段 TextTiling、音频事件 YAMNet)
 > 见 `references/approaches.md`。
 
+### 切点对齐镜头 + 话题分段(2026-11 三次修正)
+
+节拍长度对了、切点位置也不一定对。又补了两层:
+
+**A. 切点吸附到镜头边界**(`shots.py`)
+- 影视剪辑的通行做法是"切在镜头切换处"(cut on cut):镜头自己换了,观众预期这里可以跳
+- 实现:按 PySceneDetect `ContentDetector` 的思路(HSV 直方图差 + 边缘差,自适应阈值取局部峰)
+  检测镜头切换;**只解码切点 ±6 秒的小窗口**(142 个切点约 1 分钟,不必全片再解一遍)
+- 实测:142 个切点吸附 130 个(92%),平均位移 1.56 秒
+- ⚠️ **必须按同一素材的时间序列逐一约束**,否则相邻片段会重叠(实测出现过 55 秒重叠)
+
+**C. 话题分段**(`topics.py`,TextTiling / Hearst 1997)
+- 用**汉字 bigram** 当伪词(不需要分词器),算相邻块的词汇余弦相似度,取 depth 局部峰为话题边界
+- 用途:① 超长对白场景**按话题切**而不是等分;② 合并阶段**不跨话题边界**合并
+  (实测:一段对话说完再跳到下一场,而不是切在话中间)
+
+```bash
+python scripts/topics.py --transcript a.json            # 只看话题边界
+python scripts/shots.py --cuts beats.cuts.json --src-dir <素材目录> \
+       --snap 6 --out beats.snapped.cuts.json           # 切点吸附
+```
+
 ## 节奏控制(最常被投诉的问题)
 
 选段为保完整性会保留大量停顿 —— **实测静音占比 49~83%**。用 `tighten.py` 压,
@@ -298,11 +320,11 @@ whisper 在**稀疏对白**素材上会把句子拉长 —— 实测影之刃有
 
 每步的完整命令与参数见 `references/pipeline.md`,踩过的坑见 `references/gotchas.md`。
 
-**要调具体某个脚本前,先查 `references/scripts.md`** —— 那是全部 44 个脚本的
+**要调具体某个脚本前,先查 `references/scripts.md`** —— 那是全部 46 个脚本的
 自动生成索引(一句话说明 + 主要参数 + 分阶段归类),由 `gen_script_index.py`
 从源码静态抽取,不会和代码脱节。想看某脚本的完整参数就 `python <脚本> --help`。
 
-> 为什么需要它:SKILL.md 只有十几 KB,覆盖不了 44 个脚本的 CLI。没有索引时,
+> 为什么需要它:SKILL.md 只有十几 KB,覆盖不了 46 个脚本的 CLI。没有索引时,
 > 模型只能靠猜参数,或退化成"只用 SKILL.md 里出现过的那几个脚本"。
 > 实测这份索引补上之前,**有 15 个脚本在任何文档里都没被提到过**
 > (含 `analyze_tracks.py`「标准第一步」、`classify_voice.py`、`mix_audio.py`)。

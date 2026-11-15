@@ -43,6 +43,7 @@ except Exception:
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import genres
+import topics
 import transcript
 
 
@@ -161,17 +162,27 @@ def main() -> int:
                            "end": round(min(total, t1 + 4.0), 1),
                            "kind": "dialogue", "n_lines": len(run_),
                            "speech_ratio": round(speech / span, 2)})
-        # 超长场景按 max-beat 切(在台词停顿最大处切)
+        # 超长场景:优先在**话题边界**切(TextTiling),找不到再等分
+        topic_bnd = [b["t"] for b in topics.boundaries(segs, block=6, min_gap=8.0)]
+        print(f"话题边界(TextTiling) {len(topic_bnd)} 个")
         split_scenes = []
         for sc in scenes:
             if sc["end"] - sc["start"] <= a.max_beat:
                 split_scenes.append(sc)
                 continue
             n_ch = int((sc["end"] - sc["start"]) // a.max_beat) + 1
-            step = (sc["end"] - sc["start"]) / n_ch
-            for k in range(n_ch):
-                s0 = sc["start"] + k * step
-                s1 = min(sc["end"], s0 + step)
+            # 每个理想切点(等分处)在 ±60s 内找最近的话题边界
+            cuts_pts = [sc["start"]]
+            for k in range(1, n_ch):
+                ideal = sc["start"] + k * (sc["end"] - sc["start"]) / n_ch
+                cand = [t for t in topic_bnd
+                        if sc["start"] + a.min_beat <= t <= sc["end"] - a.min_beat
+                        and abs(t - ideal) <= 60]
+                cuts_pts.append(min(cand, key=lambda t: abs(t - ideal)) if cand else ideal)
+            cuts_pts.append(sc["end"])
+            cuts_pts = sorted(set(round(x, 1) for x in cuts_pts))
+            for k in range(len(cuts_pts) - 1):
+                s0, s1 = cuts_pts[k], cuts_pts[k + 1]
                 if s1 - s0 >= a.min_beat:
                     split_scenes.append({**sc, "start": round(s0, 1), "end": round(s1, 1)})
         print(f"剧情对白场景 {len(split_scenes)} 个 / "
@@ -279,7 +290,9 @@ def main() -> int:
     for b in chosen:
         # ★ 只合并同类型:剧情对白和战斗混在一起合并,会让对白场景被吞进战斗段
         #   (kind 取前者),实测一段 86 秒连续对白就这样消失了。
-        if (merged and merged[-1].get("kind") == b.get("kind")
+        cross_topic = bool(topic_bnd) and any(
+            merged and merged[-1]["end"] - 3 <= t <= b["start"] + 3 for t in topic_bnd)
+        if (merged and merged[-1].get("kind") == b.get("kind") and not cross_topic
                 and b["start"] - merged[-1]["end"] <= a.merge_gap):
             m = merged[-1]
             m["end"] = max(m["end"], b["end"])

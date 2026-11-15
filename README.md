@@ -76,7 +76,7 @@ pip install -r requirements.txt
 `action` 品类(2026-11 首用影之刃):影之刃的过场是满幅 16:9、没有黑边,`detect_cutscenes.py` 抓不到,所以改用「对白密度≈剧情 / 画面运动≈战斗」双信号互补。
 
 每步的完整命令与参数见 [`references/pipeline.md`](references/pipeline.md)，
-44 个脚本的索引见 [`references/scripts.md`](references/scripts.md)（自动生成），
+46 个脚本的索引见 [`references/scripts.md`](references/scripts.md)（自动生成），
 踩过的坑见 [`references/gotchas.md`](references/gotchas.md)。
 
 ## 成片形态分档
@@ -125,7 +125,7 @@ python scripts/pick.py --transcript t.json --metrics m.json --genre survival --t
 ```
 SKILL.md                 Agent Skill 入口（品类表 / 流程 / 必问三件事）
 README.md
-scripts/                 44 个脚本
+scripts/                 46 个脚本
   paths.py               所有外部路径的唯一解析入口（先跑这个）
   selftest.py            无素材端到端自检（21 项断言）
   tiers.py               ★ 成片形态分档（短/中/长）

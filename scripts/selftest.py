@@ -476,6 +476,33 @@ def test_beats(work: str):
           str([(round(b['start']), round(b['end'])) for b in beats]))
 
 
+
+# ============================================================ 11 TextTiling 话题分段
+def test_topics(work: str):
+    print("\n[11] TextTiling:话题切换处应出边界(词汇衔接度骤降)")
+    def mk(t, texts):
+        segs = []
+        for i, tx in enumerate(texts):
+            segs.append({"start": round(t + i * 3.0, 2),
+                         "end": round(t + i * 3.0 + 2.4, 2), "text": tx})
+        return segs
+    # 前 12 句聊挖矿,后 12 句聊战斗:话题切换在第 12/13 句之间
+    A = ["我们去挖矿吧", "这块钻石不错", "铁矿石还差三个", "先把矿洞挖通",
+         "煤炭够不够用", "箱子放在矿洞边", "钻石镐做出来了", "矿石要烧一下"]
+    B = ["敌人冲上来了", "快放技能打他", "这波怪物很强", "先拉开距离",
+         "我技能冷却好了", "注意boss的血量", "这波团战赢了", "装备掉落了"]
+    segs = mk(0.0, (A * 2)[:12] + (B * 2)[:12])
+    import topics
+    bnd = topics.boundaries(segs, block=4, min_gap=6.0)
+    ts = [b["t"] for b in bnd]
+    switch = segs[12]["start"]
+    print(f"     边界 {[round(t) for t in ts]}  话题切换点 {switch:.0f}s")
+    check("检测到话题边界", len(bnd) > 0, f"{len(bnd)} 个")
+    near = [t for t in ts if abs(t - switch) <= 12]
+    check("边界落在话题切换附近(±12s)", bool(near), str([round(x) for x in near]))
+    check("没有把每句都切成边界", len(bnd) <= 6, f"{len(bnd)} 个")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--keep", action="store_true", help="保留临时目录")
@@ -492,6 +519,7 @@ def main() -> int:
         test_motion_candidates(work)
         test_speechless_survives_tighten(work)
         test_beats(work)
+        test_topics(work)
     except Exception as e:            # noqa: BLE001  自检脚本要把原始错误完整露出
         print(f"\n💥 自检中断: {e}")
         if a.keep:

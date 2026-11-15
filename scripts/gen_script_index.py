@@ -49,6 +49,8 @@ STAGES = [
     ("⑤ 选段前置:成片分档 + 文稿时间轴规整",
      ["tiers.py", "transcript.py"]),
     ("⑥ 字幕 OCR(剧情对白的可靠信号)", ["subtitle_ocr.py"]),
+    ("⑥ 叙事/镜头边界(TextTiling 话题分段 + 镜头切点吸附)",
+     ["topics.py", "shots.py"]),
     ("⑥ 画面分析 / 选段 / 组装",
      ["analyze.py", "detect_cutscenes.py", "pick.py", "pick_visual.py",
       "beats.py", "continuous.py", "rdr_compose.py"]),

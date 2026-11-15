@@ -8,9 +8,9 @@
 
 | 类别 | 代表方案 | 能解决什么 | 对我们的代价 |
 |---|---|---|---|
-| **镜头边界检测** | [PySceneDetect](https://www.scenedetect.com/docs/latest/api/detectors.html)(ContentDetector / AdaptiveDetector / HistogramDetector / HashDetector);[TransNetV2](https://arxiv.org/abs/2008.04838)(深度学习,SOTA) | 切点落在镜头切换处,避免"切在动作中间";区分硬切/渐变 | 轻量:PySceneDetect 纯 CV,可只跑抽帧;TransNetV2 需模型(~几十 MB) |
+| **镜头边界检测** ✅已采用 | [PySceneDetect](https://www.scenedetect.com/docs/latest/api/detectors.html)(ContentDetector / AdaptiveDetector / HistogramDetector / HashDetector);[TransNetV2](https://arxiv.org/abs/2008.04838)(深度学习,SOTA) | 切点落在镜头切换处,避免"切在动作中间";区分硬切/渐变 | 已落地 `shots.py`(本机 PyPI 不通,按 ContentDetector 算法自实现):只解码切点 ±6s 窗口,142 个切点约 1 分钟;实测吸附 92%、平均位移 1.56s |
 | **画面内字幕 OCR** | RapidOCR(本项目已用)/ PaddleOCR | 剧情对白的**精确时间轴 + 干净文本**;解决 ASR 错字导致的打分失真 | 中:实测 ~0.5 秒/帧,全片不可行,需先用"说话密度"缩小范围 |
-| **叙事分段** | [TextTiling (Hearst, 1997)](https://aclanthology.org/J97-1003/):词汇衔接度找子话题边界 | 把长对话切成"一场戏/一个话题",而不是按秒切 | 极轻:纯文本算法;但需要较干净的分句(可与 OCR 文本配合) |
+| **叙事分段** ✅已采用 | [TextTiling (Hearst, 1997)](https://aclanthology.org/J97-1003/):词汇衔接度找子话题边界 | 把长对话切成"一场戏/一个话题",而不是按秒切 | 已落地 `topics.py`(汉字 bigram 当伪词,无需分词器);实测一部 128 分钟素材出 31 个话题边界 |
 | **音频事件检测** | [YAMNet](https://www.tensorflow.org/hub/tutorials/yamnet)(AudioSet 521 类) | 区分"刀剑/爆炸/欢呼/音乐",比"响度"更懂战斗 | 中:需跑音频分类;ASR 文本已经能提供不少战斗线索 |
 | **序列级高光模型** | PGL-SUM / DSNet / UMT 一类(视频摘要,TVSum/SumMe) | 直接输出"片段—重要度"曲线 | 重:需要领域标注数据微调;游戏素材与影视基准域差异大 |
 | **对话分轨/说话人** | pyannote / silero VAD | 谁在说话、停顿结构 | 本项目素材把麦克风混进了游戏轨,分不出来,收益有限 |
@@ -42,9 +42,8 @@
 
 | 优先级 | 事项 | 预期收益 | 代价 |
 |---|---|---|---|
-| 高 | **切点对齐镜头边界**(PySceneDetect 的 ContentDetector/AdaptiveDetector) | 消除"切在半句话/半动作"的突兀感 | 低:抽帧上算 HSV 直方图差分 |
 | 高 | **全量字幕 OCR → 生成字幕轨** | 直接给草稿加字幕(省一遍人工),顺带提升文本打分 | 中:按对白区间跑,约十几分钟 |
-| 中 | **TextTiling 式对话分段** | 把长对话按话题切成"一场戏" | 低:纯文本 |
+| 中 | 对白场景的**语义排序**(TextTiling + 情绪曲线) | 解决"好对白段落在预算外落选" | 中 |
 | 中 | 音频事件检测(战斗音效) | 比响度更准地识别战斗强度 | 中:YAMNet/ONNX 推理 |
 | 低 | 序列级高光模型微调 | 上限最高,但需要标注数据 | 高 |
 

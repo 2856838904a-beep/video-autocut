@@ -5,7 +5,7 @@
 
 模型加载技能后,`SKILL.md` 给出流程骨架,本文件给出**每个脚本的确切入口**。想看某个脚本的完整参数,直接 `python <脚本> --help`。
 
-共 **44** 个脚本。
+共 **46** 个脚本。
 
 ## 速查表
 
@@ -24,6 +24,8 @@
 | [`tiers.py`](#tierspy) | tiers.py —— 成片形态分档(短视频 / 中视频 / 长视频)的唯一参数源 | — |
 | [`transcript.py`](#transcriptpy) | transcript.py —— 文稿加载 + 时间轴规整(所有选段类脚本的唯一入口) | — |
 | [`subtitle_ocr.py`](#subtitle-ocrpy) | subtitle_ocr.py —— 画面内字幕抽取(把"剧情对白"变成可靠的一等信号) | `--src` `--transcript` `--out` …(+4) |
+| [`topics.py`](#topicspy) | topics.py —— TextTiling 话题分段(把长对话切成"一场戏/一个话题") | `--transcript` `--block` `--min-gap` …(+1) |
+| [`shots.py`](#shotspy) | shots.py —— 镜头边界检测 + 把切点吸附到镜头边界(对齐 PySceneDetect 的 ContentDetector 思路) | `--cuts` `--src-dir` `--out` …(+5) |
 | [`analyze.py`](#analyzepy) | analyze.py —— 长素材技术质量分析(无需 GPU、无需转写) | `--out` `--window` `--fps` …(+3) |
 | [`detect_cutscenes.py`](#detect-cutscenespy) | detect_cutscenes.py —— 检测过场动画区间(单机 3A 故事剪辑的核心信号) | `--src` `--fps` `--min` …(+3) |
 | [`pick.py`](#pickpy) | pick.py —— 统一选段器(品类通过 --genre 切换,不再每个品类一个脚本) | `--transcript` `--metrics` `--genre` …(+13) |
@@ -194,6 +196,34 @@ subtitle_ocr.py —— 画面内字幕抽取(把"剧情对白"变成可靠的一
 | `--band` |  |  |
 | `--pad` |  | `12.0` |
 | `--max-window` | 单个 OCR 区间最长秒数(过长会切片,避免抽帧太多) | `240.0` |
+
+## ⑥ 叙事/镜头边界(TextTiling 话题分段 + 镜头切点吸附)
+
+### topics.py
+
+topics.py —— TextTiling 话题分段(把长对话切成"一场戏/一个话题")
+
+| 参数 | 说明 | 默认 |
+|---|---|---|
+| `--transcript` |  |  |
+| `--block` |  | `6` |
+| `--min-gap` |  | `8.0` |
+| `--out` |  |  |
+
+### shots.py
+
+shots.py —— 镜头边界检测 + 把切点吸附到镜头边界(对齐 PySceneDetect 的 ContentDetector 思路)
+
+| 参数 | 说明 | 默认 |
+|---|---|---|
+| `--cuts` |  |  |
+| `--src-dir` |  |  |
+| `--out` |  |  |
+| `--snap` |  | `6.0` |
+| `--fps` |  | `8.0` |
+| `--probe` |  |  |
+| `--start` |  | `0.0` |
+| `--dur` |  | `60.0` |
 
 ## ⑥ 画面分析 / 选段 / 组装
 
