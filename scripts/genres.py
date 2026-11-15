@@ -227,6 +227,8 @@ PROFILES: dict[str, dict] = {
         "budget_ratio": 0.30,
         "motion_div": 12.0,          # 更看重画面动作
         "still_hint": False,
+        "motion_only": True,        # ★ 无沟通的瞬间击杀也要成为候选
+        "verified": False,
         "verified": False,
         "note": "价值在瞬间反应与结果,段落应短;画面动作权重更高。",
     },
@@ -262,6 +264,8 @@ PROFILES: dict[str, dict] = {
         "budget_ratio": 0.30,
         "motion_div": 9.0,          # 战斗高光的核心是画面强度,权重给小(除数小=更看重)
         "still_hint": False,
+        "motion_only": True,        # ★ 无对白的战斗也要成为候选(靠画面运动)
+        "verified": False,
         "verified": False,
         "note": "战斗+剧情混合。实战发现:影之刃的过场是满幅 16:9,没有黑边,"
                 "所以 detect_cutscenes 抓不到 —— 改用「对白密度≈过场 / 画面运动≈战斗」"

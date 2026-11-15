@@ -36,6 +36,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tiers
+import transcript
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -77,8 +78,7 @@ def main() -> int:
     min_seg = a.min_seg if a.min_seg is not None else td.get("min_seg", 3.0)
 
     cuts = json.load(open(a.cuts, encoding="utf-8"))["cuts"]
-    tr = json.load(open(a.transcript, encoding="utf-8"))
-    segs = tr["segments"]
+    tr, segs = transcript.load(a.transcript, verbose=True)
     mp = json.load(open(a.metrics, encoding="utf-8"))
     wins = mp["windows"]
     win = mp.get("window", 1.0)

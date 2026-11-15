@@ -328,6 +328,67 @@ def test_story(work: str):
           f"{tots['short']:.0f} < {tots['medium']:.0f} < {tots['long']:.0f}")
 
 
+
+# ============================================================ 7 文稿时间轴规整
+def test_transcript_clamp(work: str):
+    print("\n[7] 异常长句必须被规整(whisper 在稀疏对白上会把句子拉长)")
+    tp = os.path.join(work, "bad.json")
+    json.dump({"segments": [
+        {"start": 0.0, "end": 402.6, "text": "合作吗"},        # 3 字跨 402 秒
+        {"start": 500.0, "end": 501.8, "text": "正常的一句台词"},
+        {"start": 600.0, "end": 931.9, "text": "你估计了的组织"},
+    ]}, open(tp, "w", encoding="utf-8"), ensure_ascii=False)
+    sys.path.insert(0, HERE)
+    import transcript
+    _, segs = transcript.load(tp, verbose=False)
+    durs = [s["end"] - s["start"] for s in segs]
+    print(f"     规整后句长: {[round(d, 1) for d in durs]}")
+    check("402/931 秒的异常句被收到合理范围",
+          all(d <= 12.0 for d in durs), f"max={max(durs):.1f}s")
+    check("正常句(1.8s)不被误伤", abs(durs[1] - 1.8) < 0.05, f"{durs[1]:.2f}s")
+    check("异常句保留了起始时间", segs[0]["start"] == 0.0, f"{segs[0]['start']}")
+
+
+# ============================================================ 8 无对白战斗候选
+def test_motion_candidates(work: str):
+    print("\n[8] 动作类:无对白的战斗要能入选,安静的赶路不能")
+    total = 600.0
+    # 文稿只在 0~60s 有对白;中间 200~240s 是"响亮 + 高运动"(战斗),
+    # 400~440s 是"安静 + 高运动"(赶路/运镜)
+    tr = {"segments": [
+        {"start": 5.0, "end": 8.0, "text": "格挡要抓时机"},
+        {"start": 20.0, "end": 24.0, "text": "这一刀砍得漂亮"},
+    ]}
+    tp = os.path.join(work, "mc.json")
+    json.dump(tr, open(tp, "w", encoding="utf-8"), ensure_ascii=False)
+    wins = []
+    for k in range(int(total)):
+        loud, motion = -45.0, 10.0
+        if 200 <= k < 240:
+            loud, motion = -18.0, 95.0        # 战斗:响 + 动
+        elif 400 <= k < 440:
+            loud, motion = -50.0, 95.0        # 赶路:静 + 动
+        wins.append({"motion": motion, "loud": loud,
+                     "silent": loud < -45.0, "cut": 0, "dark": 0})
+    mp = os.path.join(work, "mc.metrics.json")
+    json.dump({"duration": total, "window": 1.0, "windows": wins},
+              open(mp, "w", encoding="utf-8"), ensure_ascii=False)
+
+    op = os.path.join(work, "mc.cuts.json")
+    run([os.path.join(HERE, "pick.py"), "--transcript", tp, "--metrics", mp,
+         "--genre", "action", "--tier", "medium", "--budget-sec", "120",
+         "--top", "20", "--max-unit", "15", "--out", op])
+    d = load(op)
+    starts = [c["start"] for c in d["cuts"]]
+    combat = [st for st in starts if 195 <= st <= 245]
+    quiet = [st for st in starts if 395 <= st <= 445]
+    print(f"     选段起点 {[round(x) for x in sorted(starts)]}")
+    check("无对白战斗段(200~240s)被选中", bool(combat), f"{combat}")
+    check("安静的赶路段(400~440s)被响度闸门排除", not quiet, f"{quiet}")
+    check("战斗段带『画面动作』维度",
+          any("画面动作" in c["dims"] for c in d["cuts"]), "ok")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--keep", action="store_true", help="保留临时目录")
@@ -340,6 +401,8 @@ def main() -> int:
         test_penalty(work)
         test_tighten(work, outs)
         test_story(work)
+        test_transcript_clamp(work)
+        test_motion_candidates(work)
     except Exception as e:            # noqa: BLE001  自检脚本要把原始错误完整露出
         print(f"\n💥 自检中断: {e}")
         if a.keep:

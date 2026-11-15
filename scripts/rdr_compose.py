@@ -28,6 +28,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tiers
+import transcript
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -68,8 +69,9 @@ def segs_of(p):
     if not j:
         return []
     s = j.get("segments") if isinstance(j, dict) else j
+    s = transcript.clamp_segments(list(s or []))
     return [{"start": float(x["start"]), "end": float(x["end"]),
-             "text": (x.get("text") or "").strip()} for x in (s or [])]
+             "text": (x.get("text") or "").strip()} for x in s]
 
 
 def main():

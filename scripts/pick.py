@@ -35,6 +35,7 @@ except ImportError:
 
 import genres
 import tiers
+import transcript
 
 
 def fmt(t: float) -> str:
@@ -109,8 +110,7 @@ def main() -> int:
 
     prof = genres.get(a.genre)
 
-    tr = json.load(open(a.transcript, encoding="utf-8"))
-    segs = tr["segments"]
+    tr, segs = transcript.load(a.transcript, verbose=True)
     mp = json.load(open(a.metrics, encoding="utf-8"))
     wins = mp["windows"]
     win = mp.get("window", 1.0)
@@ -146,6 +146,9 @@ def main() -> int:
     dens_boost = td.get("density_boost", 1.0)
     vari_boost = td.get("variety_boost", 1.0)
     still_min_run = resolve(None, "still_min_run", prof.get("still_min_run", 8.0))
+    # 纯画面候选:动作/射击类的精彩战斗常常一句台词都没有,
+    # 若只从对白构造候选单元,会系统性漏掉所有 BOSS 战/连杀。
+    motion_only = bool(prof.get("motion_only", False)) and not prof.get("still_hint")
     still_motion_max = prof.get("still_motion_max", 45.0)
     eff_max_unit = a.max_unit if a.max_unit is not None else td.get("max_unit")
 
@@ -214,6 +217,72 @@ def main() -> int:
         if chunk:
             units.append(chunk)
 
+    # ---- 运动候选(无对白的战斗段) ----
+    # 只在品类声明 motion_only 时启用。阈值用该素材运动分布的 p85,
+    # 保证"比别人激烈"的区间才进来,而不是固定阈值(不同素材亮度/节奏不同)。
+    if motion_only:
+        mo = [w["motion"] for w in wins]
+        try:
+            import numpy as _np
+            thr = float(_np.percentile(mo, 85)) if mo else 60.0
+        except Exception:
+            srt = sorted(mo)
+            thr = srt[int(len(srt) * 0.85)] if srt else 60.0
+        thr = max(35.0, thr)
+        # ★ 响度闸门:高运动 + 安静 = 赶路/运镜,不是战斗。
+        # 实测影之刃:被误选的运动候选响度 -37~-42 dB,而全场中位 -34.2 dB。
+        # 战斗必然更响(刀剑声/配乐),所以要求候选段平均响度不低于全场中位。
+        loud_vals = [w["loud"] for w in wins if w.get("loud") is not None]
+        loud_med = None
+        if loud_vals:
+            sv = sorted(loud_vals)
+            loud_med = sv[len(sv) // 2]
+        runs, cur = [], None
+        for i in range(n):
+            if wins[i]["motion"] >= thr:
+                if cur is None:
+                    cur = [i, i]
+                else:
+                    cur[1] = i
+            else:
+                if cur and (cur[1] - cur[0] + 1) * win >= min_dur:
+                    runs.append(cur)
+                cur = None
+        if cur and (cur[1] - cur[0] + 1) * win >= min_dur:
+            runs.append(cur)
+        # 间隔 <=2s 的相邻运动区间合并(同一场战斗被静音切碎)
+        merged_m = []
+        for r in runs:
+            if merged_m and (r[0] - merged_m[-1][1]) * win <= 2.0:
+                merged_m[-1][1] = r[1]
+            else:
+                merged_m.append(r)
+        # 与对白单元重叠过多的丢掉(那些已经有对白候选了)
+        dlg_spans = [(u[0]["start"], u[-1]["end"]) for u in units]
+
+        def overlap_ratio(a, b, spans):
+            tot = max(1e-6, b - a)
+            ov = sum(max(0.0, min(b, s1) - max(a, s0)) for s0, s1 in spans)
+            return min(1.0, ov / tot)
+
+        added = quiet_skipped = 0
+        for r in merged_m:
+            t0, t1 = r[0] * win, (r[1] + 1) * win
+            if t1 - t0 < min_dur:
+                continue
+            if overlap_ratio(t0, t1, dlg_spans) > 0.4:
+                continue
+            if loud_med is not None:
+                seg_loud = [wins[i]["loud"] for i in range(r[0], r[1] + 1)
+                            if wins[i].get("loud") is not None]
+                if seg_loud and sum(seg_loud) / len(seg_loud) < loud_med:
+                    quiet_skipped += 1
+                    continue
+            units.append([{"start": t0, "end": t1, "text": ""}])
+            added += 1
+        print(f"运动候选(无对白战斗) {added} 段   阈值 运动≥{thr:.0f}"
+              + (f"  响度≥{loud_med:.1f}dB(剔除 {quiet_skipped} 段安静的)" if loud_med is not None else ""))
+
     def score_unit(u: list[dict]) -> dict:
         dims: dict[str, float] = {}
         for s in u:
@@ -230,6 +299,9 @@ def main() -> int:
         # ★ 正负分开算:pos 用于"价值量",penalty(≤0)必须真的从总分里扣。
         #   早期版本只累加 v>0,导致「失误口误 -3.5」「填充词 -3.0」这类
         #   负向维度**完全失效** —— talk 品类的"去废"逻辑等于没写。
+        # 没有任何词典命中、但画面很激烈 -> 补一个虚拟维度,让纯战斗段可以入选
+        if not dims and peak_m >= 40 and motion_only:
+            dims = {"画面动作": round(peak_m / 10.0, 1)}
         pos = sum(v for v in dims.values() if v > 0)
         net = sum(dims.values())
         penalty = round(net - pos, 2)
