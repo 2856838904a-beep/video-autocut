@@ -441,8 +441,8 @@ python scripts/publish.py --manifest "G:\录像\...\manifest.json" [--open]
 Playwright 驱动本机 Chrome + **独立用户目录**(不碰日常浏览器),登录一次长期有效。
 
 ```bash
-# ① 首次:打开三个平台上传页,让用户当场登录(窗口保留 2 小时)
-python scripts/publish_browser.py --doctor --wait 7200
+# ① 首次登录:逐个平台打开上传页,**停在当前平台直到登录成功**再切下一个
+python scripts/publish_browser.py --doctor --per-timeout 600
 
 # ② 投一条:默认把文件/标题/简介/标签都填好,**停在发布按钮前**等人工确认
 python scripts/publish_browser.py --platform bilibili \
@@ -456,7 +456,11 @@ python scripts/publish_browser.py --platform bilibili --manifest "G:\...\manifes
 **为什么默认不点发布**:平台对自动化上传有风控(可能弹验证码/限流/触发审核),
 把"最后一击"留给人是成本最低的稳妥做法。`--publish` 才真点。
 
-**踩坑**:Playwright 用 `launch_persistent_context` + `channel="chrome"` 才能带登录态;
+**踩坑 1**:`--doctor` 早期版本是"三个平台轮流 goto + 4 秒截图",页面每几秒跳一次,
+用户根本来不及扫码 —— 现在改成逐平台等待(**检测到上传框才算登录成功**),每个平台最多
+`--per-timeout` 秒。
+
+**踩坑 2**:Playwright 用 `launch_persistent_context` + `channel="chrome"` 才能带登录态;
 独立 profile 同一时间只能被一个进程占用 —— 登录窗口没关时跑投稿会卡在 profile 锁。
 
 ## 必须先问用户的三件事

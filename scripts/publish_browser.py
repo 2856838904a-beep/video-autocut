@@ -102,44 +102,85 @@ def first_visible(page, candidates: list[str], timeout: float = 3.0):
     return None
 
 
-def doctor(profile: str, headless: bool, wait_sec: float = 1800) -> int:
-    """打开三个平台上传页并截图,给用户登录用。"""
+def _logged_in(page, plat: str) -> bool:
+    """判断当前是否已登录到"能投稿"的状态(不跳转,只检测页面元素)。
+
+    为什么要检测而不是靠 URL:三个平台登录后都会自动跳回上传页,但 YouTube
+    要先点"创建"才出现文件框,所以按平台给不同判据。
+    """
+    try:
+        if page.locator("input[type=file]").count() > 0:
+            return True
+        if plat == "youtube":
+            for sel in ("#avatar-btn", "ytcp-avatar", "button[aria-label*='创建']",
+                        "ytcp-button[aria-label*='Create']"):
+                if page.locator(sel).count() > 0:
+                    return True
+        cur = page.url.lower()
+        if "login" in cur or "passport" in cur or "accounts.google.com" in cur:
+            return False
+        # 兜底:页面上没有登录表单,且不是登录域名 -> 认为已登录
+        login_form = (page.locator("input[placeholder*='账号']").count()
+                      + page.locator("input[type='password']").count())
+        return login_form == 0
+    except Exception:
+        return False
+
+
+def doctor(profile: str, headless: bool, wait_sec: float = 1800,
+           per_timeout: float = 600) -> int:
+    """逐个平台打开上传页,**停在当前平台直到登录成功**再切下一个。
+
+    ★ 踩坑:早期版本是"三个平台轮流 goto + 4 秒截图",结果页面每几秒就跳一次,
+      用户根本来不及扫码登录。现在改成:打开一个 -> 每 3 秒检测是否已登录 ->
+      登录成功才进入下一个平台;每个平台最多等 --per-timeout 秒。
+    """
     from playwright.sync_api import sync_playwright
     os.makedirs(profile, exist_ok=True)
     with sync_playwright() as pw:
         ctx = pw.chromium.launch_persistent_context(
             profile, channel="chrome", headless=headless,
-            locale="zh-CN",
+            locale="zh-CN", no_viewport=True,
             args=["--disable-blink-features=AutomationControlled",
                   "--start-maximized"])
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
-        for plat, url in UPLOAD_URLS.items():
-            print(f"\n打开 {plat}: {url}")
+        results = {}
+        for idx, (plat, url) in enumerate(UPLOAD_URLS.items(), 1):
+            print(f"\n{'=' * 62}")
+            print(f"[{idx}/3] {plat}  —— 请在这个窗口登录(扫码/账号密码均可)")
+            print(f"        地址: {url}")
+            print(f"        登录成功后会自动进入下一个平台(每个平台最多等 {int(per_timeout)} 秒)")
+            print("=" * 62, flush=True)
             page.goto(url, wait_until="domcontentloaded", timeout=60000)
-            time.sleep(4)
-            p = shot(page, profile, f"doctor_{plat}")
-            try:
-                title = page.title()
-            except Exception:
-                title = "?"
-            files = page.locator("input[type=file]").count()
-            print(f"  页面标题: {title[:60]}")
-            print(f"  input[type=file] 数量: {files}  截图: {p}")
-        print("\n" + "=" * 60)
-        print("请在这个 Chrome 窗口里依次登录三个平台(扫码/账号密码均可):")
-        print("  1) B站   https://member.bilibili.com   → 右上角登录,扫码即可")
-        print("  2) 抖音  https://creator.douyin.com    → 手机抖音扫码")
-        print("  3) YouTube studio.youtube.com          → Google 账号登录")
-        print(f"窗口会保留 {int(wait_sec)} 秒。**登录完请直接关掉这个窗口**")
-        print("(登录态已写入独立 profile,关窗口不会丢,下次投稿直接可用)")
-        print("=" * 60, flush=True)
-        end = time.time() + wait_sec
-        while time.time() < end:
-            time.sleep(15)
-            left = int(end - time.time())
-            print(f"  窗口保留中,还剩 {left}s ...", flush=True)
+            t0 = time.time()
+            last_shot = 0.0
+            while time.time() - t0 < per_timeout:
+                time.sleep(3)
+                if _logged_in(page, plat):
+                    print(f"  ✅ {plat} 已登录(用时 {int(time.time()-t0)}s),进入下一个", flush=True)
+                    results[plat] = True
+                    shot(page, profile, f"doctor_ok_{plat}")
+                    break
+                el = int(time.time() - t0)
+                if el % 30 < 3:
+                    print(f"  [{el:>3}s] 等待 {plat} 登录 ... 当前页: {page.url[:64]}", flush=True)
+                if el - last_shot >= 60:
+                    shot(page, profile, f"doctor_wait_{plat}")
+                    last_shot = el
+            else:
+                print(f"  ⏰ {plat} 超时未登录,跳过(可稍后单独重试)", flush=True)
+                results[plat] = False
+                shot(page, profile, f"doctor_timeout_{plat}")
+
+        print("\n" + "=" * 62)
+        for k, v in results.items():
+            print(f"  {k:<9} {'✅ 已登录' if v else '❌ 未登录'}")
+        print("登录态已保存到独立 profile,可以关掉这个窗口了。")
+        print("=" * 62, flush=True)
+        # 保留窗口一会儿方便用户核对,但不阻塞后续投稿太久
+        time.sleep(min(60, max(10, wait_sec)))
         ctx.close()
-    return 0
+    return 0 if all(results.values()) else 1
 
 
 def check_login(profile: str, headless: bool) -> int:
@@ -289,13 +330,15 @@ def main() -> int:
     ap.add_argument("--doctor", action="store_true", help="打开三个平台页面供登录")
     ap.add_argument("--check-login", action="store_true", help="检查三个平台登录态")
     ap.add_argument("--wait", type=float, default=1800,
-                    help="doctor 模式窗口保留秒数(默认 1800)")
+                    help="doctor 结束后窗口再保留的秒数")
+    ap.add_argument("--per-timeout", type=float, default=600,
+                    help="doctor 模式每个平台等待登录的最长秒数(默认 600)")
     a = ap.parse_args()
 
     if a.check_login:
         return check_login(a.profile, a.headless)
     if a.doctor:
-        return doctor(a.profile, a.headless, a.wait)
+        return doctor(a.profile, a.headless, a.wait, a.per_timeout)
     if not a.platform:
         print("需要 --platform(或 --doctor)", file=sys.stderr)
         return 2
