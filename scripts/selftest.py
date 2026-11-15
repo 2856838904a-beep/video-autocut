@@ -389,6 +389,37 @@ def test_motion_candidates(work: str):
           any("画面动作" in c["dims"] for c in d["cuts"]), "ok")
 
 
+
+# ============================================================ 9 无语音片段不被压掉
+def test_speechless_survives_tighten(work: str):
+    print("\n[9] 纯战斗段(无台词)压节奏时必须原样保留")
+    total = 300.0
+    tr = {"segments": [
+        {"start": 10.0, "end": 13.0, "text": "这一刀很关键"},
+        {"start": 18.0, "end": 21.0, "text": "注意他的第二段"},
+    ]}
+    tp = os.path.join(work, "t9.json")
+    json.dump(tr, open(tp, "w", encoding="utf-8"), ensure_ascii=False)
+    make_metrics(os.path.join(work, "t9.metrics.json"), total, tr)
+    cuts = {"cuts": [
+        {"start": 9.0, "end": 22.0, "dur": 13.0, "score": 5, "text": "有对白的段"},
+        {"start": 200.0, "end": 220.0, "dur": 20.0, "score": 9, "text": ""},
+    ]}
+    cp = os.path.join(work, "t9.cuts.json")
+    json.dump(cuts, open(cp, "w", encoding="utf-8"), ensure_ascii=False)
+    op = os.path.join(work, "t9.tight.json")
+    run([os.path.join(HERE, "tighten.py"), "--cuts", cp, "--transcript", tp,
+         "--metrics", os.path.join(work, "t9.metrics.json"), "--tier", "medium",
+         "--out", op])
+    got = load(op)["cuts"]
+    speechless = [c for c in got if c.get("speechless")]
+    print(f"     压后 {len(got)} 段,其中无语音 {len(speechless)} 段")
+    check("无语音战斗段被保留", len(speechless) == 1, f"{len(speechless)} 段")
+    if speechless:
+        check("保留段时长几乎不变(20s)",
+              abs(speechless[0]["dur"] - 20.0) < 0.5, f"{speechless[0]['dur']:.1f}s")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--keep", action="store_true", help="保留临时目录")
@@ -403,6 +434,7 @@ def main() -> int:
         test_story(work)
         test_transcript_clamp(work)
         test_motion_candidates(work)
+        test_speechless_survives_tighten(work)
     except Exception as e:            # noqa: BLE001  自检脚本要把原始错误完整露出
         print(f"\n💥 自检中断: {e}")
         if a.keep:

@@ -83,6 +83,7 @@ def main() -> int:
     wins = mp["windows"]
     win = mp.get("window", 1.0)
     n = len(wins)
+    tr_dur = float(mp.get("duration") or (n * win))
 
     def silence_ratio(t0: float, t1: float) -> float:
         i0, i1 = int(t0 // win), int(t1 // win)
@@ -112,6 +113,23 @@ def main() -> int:
         if inner:
             inner[0] = dict(inner[0], start=max(inner[0]["start"], c0))
             inner[-1] = dict(inner[-1], end=min(inner[-1]["end"], c1))
+
+        # ★ 无语音片段(纯战斗/空镜)原样保留:没有句子 = 没有空隙可压。
+        #   原代码会让 keeps 为空 -> final 为空 -> 整段被丢掉。
+        #   实测影之刃:动作类选段里近一半是无台词的战斗段,不修会把最精彩的
+        #   部分全删掉(49.4 分钟被压成 23.7 分钟,丢的正是战斗)。
+        if not inner:
+            k0, k1 = max(c0, 0.0), min(c1, tr_dur)
+            total_after += k1 - k0
+            out_cuts.append({
+                "start": round(k0, 2), "end": round(k1, 2),
+                "dur": round(k1 - k0, 2),
+                "src_start": round(c0, 2), "src_end": round(c1, 2),
+                "score": c.get("score"), "text": c.get("text", ""),
+                "speechless": True,
+            })
+            print(f"#{ci}  {fmt(c0)}–{fmt(c1)}  {c1 - c0:6.1f}s 无语音 -> 原样保留")
+            continue
 
         keeps: list[list[float]] = []
         if mode == "gap":
