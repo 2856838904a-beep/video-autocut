@@ -16,6 +16,9 @@ disable-model-invocation: false
 | `story` **单机 3A 故事向**(大镖客、GTA) | ✅ 已验证 | **过场动画黑边** | `rdr_compose.py` |
 | `shooter` 射击/竞技 | ⚠️ 未验证 | 瞬间反应,段落短 | `pick.py` |
 | `action` **动作/武侠 ARPG**(影之刃、黑神话、只狼) | ⚠️ 未验证(2026-11 首用影之刃) | **战斗运动 + 剧情对白**双信号 | `pick.py` + `episodes.py` |
+
+> `action` / `shooter` 开了 `motion_only`:**没有台词的战斗也会成为候选**(按运动 p85 +
+  响度闸门)。为什么需要:精彩战斗往往一句话都没有,只从对白构造候选会把 BOSS 战全漏掉。
 | `vlog` 旅行空镜 | ⚠️ 未验证 | 无解说 + 画面平稳 | `pick.py` |
 | `talk` 口播/讲解 | ⚠️ 未验证 | 表达密度,优先"去废" | `pick.py` |
 
@@ -232,6 +235,14 @@ MC/RDR 配置。**它们是新批次的好模板,但不是开箱即用的工具*
 ⑩ 装入草稿库     install_when_closed.py         → 等剪映退出后自动装入
 ⑪ 清理中间产物   cleanup_work.py --dry / --yes  → 按清单回收(实测一次 258 GB)
 ```
+
+### 文稿时间轴必须规整(`transcript.py`)
+
+whisper 在**稀疏对白**素材上会把句子拉长 —— 实测影之刃有「3 个词跨 402 秒」、
+单句最长 931 秒。不规整会直接导致:选段出现 181s/491s 的怪物候选段、压缩率失控、
+分集时长统计错误。`transcript.py` 按字数反推合理时长做上界裁剪
+(期望 ≈ 字数×0.45s+1,只裁明显异常的,正常句不误伤),`pick.py` / `tighten.py` /
+`rdr_compose.py` 已统一接入 —— **新写读文稿的脚本请也用它,不要直接 json.load**。
 
 每步的完整命令与参数见 `references/pipeline.md`,踩过的坑见 `references/gotchas.md`。
 

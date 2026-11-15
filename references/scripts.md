@@ -5,7 +5,7 @@
 
 模型加载技能后,`SKILL.md` 给出流程骨架,本文件给出**每个脚本的确切入口**。想看某个脚本的完整参数,直接 `python <脚本> --help`。
 
-共 **40** 个脚本。
+共 **41** 个脚本。
 
 ## 速查表
 
@@ -22,6 +22,7 @@
 | [`verify_tracks_all.py`](#verify-tracks-allpy) | verify_tracks_all.py —— 对全库每个文件逐轨转写验证,找出真正的解说轨 | `--src` `--seconds` `--out` |
 | [`transcribe_long.py`](#transcribe-longpy) | transcribe_long.py —— 长素材分块转写(解决 6 小时音频一次性转写 MemoryError) | `--out` `--chunk-min` `--model` …(+4) |
 | [`tiers.py`](#tierspy) | tiers.py —— 成片形态分档(短视频 / 中视频 / 长视频)的唯一参数源 | — |
+| [`transcript.py`](#transcriptpy) | transcript.py —— 文稿加载 + 时间轴规整(所有选段类脚本的唯一入口) | — |
 | [`analyze.py`](#analyzepy) | analyze.py —— 长素材技术质量分析(无需 GPU、无需转写) | `--out` `--window` `--fps` …(+3) |
 | [`detect_cutscenes.py`](#detect-cutscenespy) | detect_cutscenes.py —— 检测过场动画区间(单机 3A 故事剪辑的核心信号) | `--src` `--fps` `--min` …(+3) |
 | [`pick.py`](#pickpy) | pick.py —— 统一选段器(品类通过 --genre 切换,不再每个品类一个脚本) | `--transcript` `--metrics` `--genre` …(+13) |
@@ -159,11 +160,18 @@ transcribe_long.py —— 长素材分块转写(解决 6 小时音频一次性�
 | `--language` |  |  |
 | `--vad` |  | `True` |
 
-## ⑤ 选段前:成片形态分档(短/中/长视频)
+## ⑤ 选段前置:成片分档 + 文稿时间轴规整
 
 ### tiers.py
 
 tiers.py —— 成片形态分档(短视频 / 中视频 / 长视频)的唯一参数源
+
+(无命令行参数 —— 作为模块被其它脚本 import,
+或直接运行执行固定动作)
+
+### transcript.py
+
+transcript.py —— 文稿加载 + 时间轴规整(所有选段类脚本的唯一入口)
 
 (无命令行参数 —— 作为模块被其它脚本 import,
 或直接运行执行固定动作)
