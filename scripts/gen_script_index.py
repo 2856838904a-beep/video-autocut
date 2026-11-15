@@ -50,7 +50,7 @@ STAGES = [
      ["tiers.py", "transcript.py"]),
     ("⑥ 画面分析 / 选段 / 组装",
      ["analyze.py", "detect_cutscenes.py", "pick.py", "pick_visual.py",
-      "rdr_compose.py"]),
+      "beats.py", "continuous.py", "rdr_compose.py"]),
     ("⑦ 压紧节奏", ["tighten.py"]),
     ("⑧ 连续剧分集(长素材必用)", ["episodes.py"]),
     ("⑨ 导出片段 / 混音",

@@ -5,7 +5,7 @@
 
 模型加载技能后,`SKILL.md` 给出流程骨架,本文件给出**每个脚本的确切入口**。想看某个脚本的完整参数,直接 `python <脚本> --help`。
 
-共 **41** 个脚本。
+共 **43** 个脚本。
 
 ## 速查表
 
@@ -27,6 +27,8 @@
 | [`detect_cutscenes.py`](#detect-cutscenespy) | detect_cutscenes.py —— 检测过场动画区间(单机 3A 故事剪辑的核心信号) | `--src` `--fps` `--min` …(+3) |
 | [`pick.py`](#pickpy) | pick.py —— 统一选段器(品类通过 --genre 切换,不再每个品类一个脚本) | `--transcript` `--metrics` `--genre` …(+13) |
 | [`pick_visual.py`](#pick-visualpy) | pick_visual.py —— 纯画面选段(无解说素材专用) | `--metrics` `--transcript` `--top` …(+4) |
+| [`beats.py`](#beatspy) | beats.py —— 按「剧情 / 情绪推进」切分叙事节拍(不按固定时长) | `--cuts` `--metrics` `--transcript` …(+8) |
+| [`continuous.py`](#continuouspy) | continuous.py —— 把「碎片化选段」重建成「连续块」(解决观感"剪得碎、不连贯") | `--cuts` `--metrics` `--min-block` …(+6) |
 | [`rdr_compose.py`](#rdr-composepy) | rdr_compose.py —— 大镖客故事向选段组装器 | `--work` `--file` `--tier` …(+5) |
 | [`tighten.py`](#tightenpy) | tighten.py —— 压缩片段内部的对话空隙(解决"节奏太慢") | `--cuts` `--transcript` `--metrics` …(+7) |
 | [`episodes.py`](#episodespy) | episodes.py —— 把选段切成一集一集的「连续剧」 | `--cuts` `--target-min` `--tolerance-min` …(+4) |
@@ -239,6 +241,40 @@ pick_visual.py —— 纯画面选段(无解说素材专用)
 | `--budget-sec` |  | `300.0` |
 | `--max-unit` |  | `150.0` |
 | `--min-unit` |  | `6.0` |
+| `--out` |  |  |
+
+### beats.py
+
+beats.py —— 按「剧情 / 情绪推进」切分叙事节拍(不按固定时长)
+
+| 参数 | 说明 | 默认 |
+|---|---|---|
+| `--cuts` | 种子选段(pick.py 输出,用于确定要覆盖的热点) |  |
+| `--metrics` |  |  |
+| `--transcript` |  |  |
+| `--genre` |  | `action` |
+| `--pause` | 对白停顿 >= 此值算节拍边界 | `2.0` |
+| `--rest` | 张力连续低于 p30 达此秒数算节拍边界(战斗结束) | `5.0` |
+| `--min-beat` |  | `20.0` |
+| `--max-beat` |  | `300.0` |
+| `--merge-gap` | 相邻入选节拍间隔 <= 此值时连成一段 | `6.0` |
+| `--budget-sec` |  | `0.0` |
+| `--out` |  |  |
+
+### continuous.py
+
+continuous.py —— 把「碎片化选段」重建成「连续块」(解决观感"剪得碎、不连贯")
+
+| 参数 | 说明 | 默认 |
+|---|---|---|
+| `--cuts` |  |  |
+| `--metrics` | 与 --cuts 一一对应的 metrics.json(用于找安静切点) |  |
+| `--min-block` |  | `75.0` |
+| `--max-block` |  | `180.0` |
+| `--merge-gap` | 两块间隔 <= 此值时连成一块(而不是跳过) | `15.0` |
+| `--snap` | 切点吸附搜索半径(秒) | `8.0` |
+| `--budget-sec` | 总时长上限;超过时按块价值裁掉(0=不限) | `0.0` |
+| `--seed-top` | 先按分数取前 N 个选段当「场景中心」再展开(0=全部展开)。为什么需要:把 300 个 8 秒碎片全展开成 75 秒再裁掉大半纯属浪费,正确做法是先少选种子,再让每颗种子长成一段 | `0` |
 | `--out` |  |  |
 
 ### rdr_compose.py

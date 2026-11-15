@@ -425,6 +425,57 @@ def test_speechless_survives_tighten(work: str):
               abs(speechless[0]["dur"] - 20.0) < 0.5, f"{speechless[0]['dur']:.1f}s")
 
 
+
+# ============================================================ 10 叙事节拍
+def test_beats(work: str):
+    print("\n[10] 节拍切分:边界应落在对白停顿/张力回落处,长度不固定")
+    total = 240.0
+    # 两段对白(各约 20s,中间 12s 停顿)+ 中间一段 40s 无对白战斗
+    tr = {"segments": [
+        {"start": 5.0, "end": 8.0, "text": "这句是关键"},
+        {"start": 9.0, "end": 12.0, "text": "他来了"},
+        {"start": 20.0, "end": 24.0, "text": "小心他的第二段"},
+        {"start": 120.0, "end": 124.0, "text": "终于打完了"},
+        {"start": 126.0, "end": 130.0, "text": "这刀不错"},
+    ]}
+    tp = os.path.join(work, "b10.json")
+    json.dump(tr, open(tp, "w", encoding="utf-8"), ensure_ascii=False)
+    wins = []
+    for k in range(int(total)):
+        loud, mo = -45.0, 8.0
+        if 30 <= k < 70:            # 张力高的一段(战斗)
+            loud, mo = -18.0, 95.0
+        elif 140 <= k < 150:        # 第二个小高潮
+            loud, mo = -20.0, 85.0
+        wins.append({"motion": mo, "loud": loud,
+                     "silent": loud < -45.0, "cut": 0, "dark": 0})
+    mp = os.path.join(work, "b10.metrics.json")
+    json.dump({"duration": total, "window": 1.0, "windows": wins},
+              open(mp, "w", encoding="utf-8"), ensure_ascii=False)
+    seeds = {"cuts": [{"start": 6.0, "end": 12.0, "dur": 6.0, "score": 9.0, "text": ""},
+                      {"start": 32.0, "end": 66.0, "dur": 34.0, "score": 8.0, "text": ""},
+                      {"start": 120.0, "end": 130.0, "dur": 10.0, "score": 7.0, "text": ""}]}
+    sp = os.path.join(work, "b10.cuts.json")
+    json.dump(seeds, open(sp, "w", encoding="utf-8"), ensure_ascii=False)
+    op = os.path.join(work, "b10.beats.json")
+    run([os.path.join(HERE, "beats.py"), "--cuts", sp, "--metrics", mp,
+         "--transcript", tp, "--genre", "action", "--min-beat", "15",
+         "--max-beat", "120", "--out", op])
+    d = load(op)
+    beats = d["cuts"]
+    durs = sorted(b["dur"] for b in beats)
+    print(f"     节拍 {len(beats)} 个,段长 {[round(x) for x in durs]}")
+    check("切出了多个节拍(不是整段一条)", len(beats) >= 2, f"{len(beats)} 个")
+    check("节拍长度不固定(有长有短)",
+          durs[-1] - durs[0] >= 10, f"{durs[0]:.0f}s ~ {durs[-1]:.0f}s")
+    check("节拍均不超过 max-beat",
+          all(b["dur"] <= 121 for b in beats), f"max {durs[-1]:.0f}s")
+    # 战斗段(30~70s)应被完整覆盖,而不是被切断
+    covered = any(b["start"] <= 32 and b["end"] >= 66 for b in beats)
+    check("无对白战斗段被完整包含在一个节拍里", covered,
+          str([(round(b['start']), round(b['end'])) for b in beats]))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--keep", action="store_true", help="保留临时目录")
@@ -440,6 +491,7 @@ def main() -> int:
         test_transcript_clamp(work)
         test_motion_candidates(work)
         test_speechless_survives_tighten(work)
+        test_beats(work)
     except Exception as e:            # noqa: BLE001  自检脚本要把原始错误完整露出
         print(f"\n💥 自检中断: {e}")
         if a.keep:
