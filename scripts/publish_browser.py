@@ -319,6 +319,57 @@ def pick_dropdown(page, placeholder_kw: str, want: str, profile: str = "",
         return False
 
 
+def dump_options(profile: str, plat: str, headless: bool,
+                 keywords: list[str]) -> int:
+    """打开投稿页,点开各必填下拉,把选项文案打印出来(不依赖猜测)。
+
+    用途:B站「创作声明」「分区」这类下拉的文案会随平台改版,
+    先 dump 再决定 --claim/--zone 传什么。
+    """
+    from playwright.sync_api import sync_playwright
+    os.makedirs(profile, exist_ok=True)
+    with sync_playwright() as pw:
+        ctx = pw.chromium.launch_persistent_context(
+            profile, channel="chrome", headless=headless, locale="zh-CN",
+            no_viewport=True,
+            args=["--disable-blink-features=AutomationControlled",
+                  "--start-maximized"])
+        page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        page.goto(UPLOAD_URLS[plat], wait_until="domcontentloaded", timeout=60000)
+        time.sleep(6)
+        dismiss_dialogs(page, profile, f"dump_{plat}")
+        for kw in keywords:
+            print(f"\n--- 下拉「{kw}」---")
+            try:
+                page.get_by_text(kw, exact=False).first.click(timeout=4000)
+                time.sleep(1.2)
+                # 选项一般是 li / [class*=option] / 可见文本
+                opts = []
+                for sel in ("li", "[class*='option']", "[role='option']"):
+                    loc = page.locator(sel)
+                    n = min(loc.count(), 40)
+                    for i in range(n):
+                        try:
+                            e = loc.nth(i)
+                            if not e.is_visible():
+                                continue
+                            t = (e.inner_text() or "").strip().replace("\n", " ")
+                            if t and len(t) <= 30 and t not in opts:
+                                opts.append(t)
+                        except Exception:
+                            continue
+                print(f"  共 {len(opts)} 个可见候选:")
+                for t in opts[:30]:
+                    print(f"    · {t}")
+                page.keyboard.press("Escape")
+                time.sleep(0.5)
+            except Exception as e:
+                print(f"  打开失败: {e}")
+        shot(page, profile, f"dump_{plat}")
+        ctx.close()
+    return 0
+
+
 def fill_and_upload(page, plat: str, file: str, title: str, desc: str,
                     tags: str, profile: str, upload_wait: float = 180,
                     claim: str = "", zone: str = "") -> bool:
@@ -475,12 +526,19 @@ def main() -> int:
                     help="提交文件后等待上传/转码完成的最长秒数")
     ap.add_argument("--doctor", action="store_true", help="打开三个平台页面供登录")
     ap.add_argument("--check-login", action="store_true", help="检查三个平台登录态")
+    ap.add_argument("--dump-options", action="store_true",
+                    help="读取必填下拉的选项文案(配合 --platform)")
+    ap.add_argument("--dump-keywords", default="创作声明,分区",
+                    help="要 dump 的下拉文案,逗号分隔")
     ap.add_argument("--wait", type=float, default=1800,
                     help="doctor 结束后窗口再保留的秒数")
     ap.add_argument("--per-timeout", type=float, default=600,
                     help="doctor 模式每个平台等待登录的最长秒数(默认 600)")
     a = ap.parse_args()
 
+    if a.dump_options:
+        kws = [x.strip() for x in a.dump_keywords.split(",") if x.strip()]
+        return dump_options(a.profile, a.platform or "bilibili", a.headless, kws)
     if a.check_login:
         return check_login(a.profile, a.headless)
     if a.doctor:
