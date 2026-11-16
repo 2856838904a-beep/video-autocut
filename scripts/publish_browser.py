@@ -90,6 +90,46 @@ def shot(page, profile: str, tag: str) -> str:
     return p
 
 
+def dismiss_dialogs(page, profile: str = "", tag: str = "") -> int:
+    """关掉平台的各种"投稿须知/公告/引导"弹窗。
+
+    ★ 踩坑:B站投稿页首次进入会弹 `videoup-notification-dialog` 遮罩,
+      不关掉的话后续 click 会被拦截(报 "subtree intercepts pointer events")。
+    """
+    closed = 0
+    texts = ["我知道了", "我已知晓", "知道了", "确定", "关闭", "下次再说",
+             "同意", "继续", "开始投稿", "取消"]
+    for t in texts:
+        try:
+            loc = page.locator(f"button:has-text('{t}'), span:has-text('{t}'), "
+                               f"div[class*='btn']:has-text('{t}')").first
+            if loc.count() > 0 and loc.is_visible():
+                loc.click(timeout=2500)
+                closed += 1
+                time.sleep(0.6)
+        except Exception:
+            continue
+    # 兜底:直接点遮罩上的关闭图标
+    for sel in (".bcc-dialog__close", "[class*='close-icon']", "i[class*='close']",
+                ".bcc-dialog__footer button"):
+        try:
+            loc = page.locator(sel).first
+            if loc.count() > 0 and loc.is_visible():
+                loc.click(timeout=2000, force=True)
+                closed += 1
+                time.sleep(0.5)
+        except Exception:
+            continue
+    # 再兜底:按 ESC
+    try:
+        page.keyboard.press("Escape")
+    except Exception:
+        pass
+    if closed and profile:
+        print(f"  已关闭 {closed} 个弹窗")
+    return closed
+
+
 def first_visible(page, candidates: list[str], timeout: float = 3.0):
     """依次尝试候选选择器,返回第一个可见元素。"""
     for sel in candidates:
@@ -103,32 +143,64 @@ def first_visible(page, candidates: list[str], timeout: float = 3.0):
 
 
 def _logged_in(page, plat: str) -> bool:
-    """判断当前是否已登录到"能投稿"的状态(不跳转,只检测页面元素)。
+    """判断是否已登录到"能投稿"的状态 —— 只认**正向证据**,不再用"没找到登录框"兜底。
 
-    为什么要检测而不是靠 URL:三个平台登录后都会自动跳回上传页,但 YouTube
-    要先点"创建"才出现文件框,所以按平台给不同判据。
+    ★ 踩坑:早期版本兜底逻辑是"页面上没有登录表单就算已登录",结果抖音登录页
+      (手机号输入框不是 password 类型)被误判成已登录,3 秒就"通过"了。
+      现在只认三种正向证据:上传文件框 / 平台后台特征元素 / 明确的登录后 URL。
     """
     try:
+        cur = page.url.lower()
+        # 明确处在登录/授权域名 -> 一定没登录
+        for bad in ("passport.bilibili.com", "accounts.google.com",
+                    "/login", "passport.douyin", "sso"):
+            if bad in cur:
+                return False
+        # 正向证据 1:上传文件框(三个平台进入投稿页后都有)
         if page.locator("input[type=file]").count() > 0:
             return True
+        # 正向证据 2:平台后台特征元素
         if plat == "youtube":
             for sel in ("#avatar-btn", "ytcp-avatar", "button[aria-label*='创建']",
-                        "ytcp-button[aria-label*='Create']"):
+                        "ytcp-button[aria-label*='Create']", "#create-icon"):
                 if page.locator(sel).count() > 0:
                     return True
-        cur = page.url.lower()
-        if "login" in cur or "passport" in cur or "accounts.google.com" in cur:
-            return False
-        # 兜底:页面上没有登录表单,且不是登录域名 -> 认为已登录
-        login_form = (page.locator("input[placeholder*='账号']").count()
-                      + page.locator("input[type='password']").count())
-        return login_form == 0
+            if "studio.youtube.com/channel/" in cur:
+                return True
+        if plat == "bilibili":
+            # 登录后 B站会把页面重定向到「创作中心后台」(member.bilibili.com/platform/...),
+            # 而不是停在投稿页 —— 所以先看域名,再看后台特征
+            if "member.bilibili.com/platform" in cur and "passport" not in cur:
+                return True
+            for sel in (".nav-user-info", ".user-info", "a[href*='/platform/home']",
+                        ".header-avatar", "text=创作中心", "text=投稿"):
+                try:
+                    if page.locator(sel).count() > 0:
+                        return True
+                except Exception:
+                    pass
+        if plat == "douyin":
+            # 登录页特征词:扫码登录/验证码登录;出现这些一定没登录
+            for bad_txt in ("扫码登录", "验证码登录"):
+                try:
+                    if page.locator(f"text={bad_txt}").count() > 0:
+                        return False
+                except Exception:
+                    pass
+            for sel in ("div[class*='avatar']", "img[class*='avatar']",
+                        "text=发布视频", "text=作品管理", "text=数据中心"):
+                try:
+                    if page.locator(sel).count() > 0:
+                        return True
+                except Exception:
+                    pass
+        return False
     except Exception:
         return False
 
 
 def doctor(profile: str, headless: bool, wait_sec: float = 1800,
-           per_timeout: float = 600) -> int:
+           per_timeout: float = 600, only: str = "") -> int:
     """逐个平台打开上传页,**停在当前平台直到登录成功**再切下一个。
 
     ★ 踩坑:早期版本是"三个平台轮流 goto + 4 秒截图",结果页面每几秒就跳一次,
@@ -145,9 +217,10 @@ def doctor(profile: str, headless: bool, wait_sec: float = 1800,
                   "--start-maximized"])
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         results = {}
-        for idx, (plat, url) in enumerate(UPLOAD_URLS.items(), 1):
+        items = [(k, v) for k, v in UPLOAD_URLS.items() if not only or k == only]
+        for idx, (plat, url) in enumerate(items, 1):
             print(f"\n{'=' * 62}")
-            print(f"[{idx}/3] {plat}  —— 请在这个窗口登录(扫码/账号密码均可)")
+            print(f"[{idx}/{len(items)}] {plat}  —— 请在这个窗口登录(扫码/账号密码均可)")
             print(f"        地址: {url}")
             print(f"        登录成功后会自动进入下一个平台(每个平台最多等 {int(per_timeout)} 秒)")
             print("=" * 62, flush=True)
@@ -211,22 +284,82 @@ def check_login(profile: str, headless: bool) -> int:
     return 0 if all(ok.values()) else 1
 
 
+def pick_dropdown(page, placeholder_kw: str, want: str, profile: str = "",
+                  tag: str = "") -> bool:
+    """点开某个下拉框并选含 want 文本的选项(用于 B站的「创作声明」「分区」)。
+
+    B站投稿必填项里,「创作声明」是下拉选择,不选的话点发布会被拦。
+    """
+    try:
+        box = page.locator(
+            f"div:has-text('{placeholder_kw}') >> xpath=.. >> "
+            f"[class*='select'], [class*='select']:has-text('{placeholder_kw}')").first
+        # 更稳:直接点带 placeholder 文案的可点击区域
+        cand = page.get_by_text(placeholder_kw, exact=False).first
+        if cand.count() == 0:
+            return False
+        cand.click(timeout=3000)
+        time.sleep(0.8)
+        opt = page.locator(f"text={want}").first
+        if opt.count() == 0:
+            # 退而求其次:选第一个看起来"无需声明"的选项
+            for alt in ("无需声明", "内容无需", "未使用AI", "不使用AI", "其他"):
+                o = page.locator(f"text={alt}").first
+                if o.count() > 0:
+                    o.click(timeout=2500)
+                    print(f"  下拉「{placeholder_kw}」按兜底选了: {alt}")
+                    return True
+            print(f"  ⚠️ 下拉「{placeholder_kw}」无匹配选项(需要: {want})")
+            return False
+        opt.click(timeout=2500)
+        print(f"  下拉「{placeholder_kw}」已选: {want}")
+        return True
+    except Exception as e:
+        print(f"  ⚠️ 下拉「{placeholder_kw}」选择失败: {e}")
+        return False
+
+
 def fill_and_upload(page, plat: str, file: str, title: str, desc: str,
-                    tags: str, profile: str) -> bool:
+                    tags: str, profile: str, upload_wait: float = 180,
+                    claim: str = "", zone: str = "") -> bool:
     sel = SELECTORS[plat]
     name = os.path.basename(file)
     print(f"  [{plat}] 页面: {page.url}")
 
     # 1) 上传文件
-    f = first_visible(page, sel["file"], timeout=8)
-    if not f:
+    # ★ input[type=file] 在 B站/抖音都是**隐藏元素**(display:none),界面上是样式化按钮,
+    #   所以不能用"可见"判据找它 —— 直接定位并 set_input_files 即可(hidden input 也支持)。
+    dismiss_dialogs(page, profile, f"pre_{plat}")
+    f = None
+    for sel_one in sel["file"]:
+        try:
+            loc = page.locator(sel_one).first
+            if loc.count() > 0:
+                f = loc
+                break
+        except Exception:
+            continue
+    if f is None:
         print("  ❌ 找不到文件选择框(可能未登录或页面改版)")
         print("     截图:", shot(page, profile, f"nofile_{plat}"))
         return False
     print(f"  选择文件: {name}")
     f.set_input_files(file)
-    time.sleep(6)
+    print(f"  已提交文件,等待页面出现填写框(最多 {int(upload_wait)}s;大文件含上传+转码)")
+    t0 = time.time()
+    ready = None
+    while time.time() - t0 < upload_wait:
+        time.sleep(3)
+        ready = first_visible(page, sel["title"], timeout=1.0)
+        if ready:
+            break
+        if int(time.time() - t0) % 20 < 3:
+            print(f"    [{int(time.time()-t0):>3}s] 等待上传/转码 ...", flush=True)
+    if not ready:
+        print("  ⚠️ 超时未见标题框(可能还在上传),截图:", shot(page, profile, f"uploadwait_{plat}"))
+        return False
 
+    dismiss_dialogs(page, profile, f"mid_{plat}")
     # 2) 标题
     if title:
         t = first_visible(page, sel["title"], timeout=12)
@@ -268,12 +401,20 @@ def fill_and_upload(page, plat: str, file: str, title: str, desc: str,
             except Exception as e:
                 print(f"  ⚠️ 标签填写失败: {e}")
 
+    # 5) B站必填:创作声明 / 分区
+    if plat == "bilibili":
+        if claim:
+            pick_dropdown(page, "创作声明", claim, profile, plat)
+        if zone:
+            pick_dropdown(page, "分区", zone, profile, plat)
+
     print("  截图:", shot(page, profile, f"filled_{plat}"))
     return True
 
 
 def do_upload(profile: str, plat: str, file: str, title: str, desc: str,
-              tags: str, publish: bool, headless: bool, keep: float) -> int:
+              tags: str, publish: bool, headless: bool, keep: float,
+              upload_wait: float = 180) -> int:
     from playwright.sync_api import sync_playwright
     os.makedirs(profile, exist_ok=True)
     with sync_playwright() as pw:
@@ -284,7 +425,8 @@ def do_upload(profile: str, plat: str, file: str, title: str, desc: str,
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.goto(UPLOAD_URLS[plat], wait_until="domcontentloaded", timeout=60000)
         time.sleep(5)
-        ok = fill_and_upload(page, plat, file, title, desc, tags, profile)
+        ok = fill_and_upload(page, plat, file, title, desc, tags, profile,
+                             upload_wait, claim, zone)
         if not ok:
             ctx.close()
             return 2
@@ -327,6 +469,10 @@ def main() -> int:
     ap.add_argument("--headless", action="store_true")
     ap.add_argument("--publish", action="store_true", help="真的点发布(默认只填不点)")
     ap.add_argument("--keep", type=float, default=180, help="不发布时浏览器保留秒数")
+    ap.add_argument("--claim", default="", help="B站创作声明(如 '内容无需声明')")
+    ap.add_argument("--zone", default="游戏", help="B站分区(默认 游戏)")
+    ap.add_argument("--upload-wait", type=float, default=180,
+                    help="提交文件后等待上传/转码完成的最长秒数")
     ap.add_argument("--doctor", action="store_true", help="打开三个平台页面供登录")
     ap.add_argument("--check-login", action="store_true", help="检查三个平台登录态")
     ap.add_argument("--wait", type=float, default=1800,
@@ -338,7 +484,7 @@ def main() -> int:
     if a.check_login:
         return check_login(a.profile, a.headless)
     if a.doctor:
-        return doctor(a.profile, a.headless, a.wait, a.per_timeout)
+        return doctor(a.profile, a.headless, a.wait, a.per_timeout, a.platform or "")
     if not a.platform:
         print("需要 --platform(或 --doctor)", file=sys.stderr)
         return 2
@@ -356,7 +502,7 @@ def main() -> int:
             print(f"\n=== 投 {os.path.basename(j['file'])} ===")
             rc = do_upload(a.profile, a.platform, j["file"], title, a.desc,
                            a.tags or "影之刃,游戏剪辑,高光时刻", a.publish,
-                           a.headless, a.keep)
+                           a.headless, a.keep, a.upload_wait, a.claim, a.zone)
             if rc != 0:
                 print("  中断批量")
                 break
@@ -366,7 +512,7 @@ def main() -> int:
         print("需要 --file(或 --manifest)", file=sys.stderr)
         return 2
     return do_upload(a.profile, a.platform, a.file, a.title, a.desc, a.tags,
-                     a.publish, a.headless, a.keep)
+                     a.publish, a.headless, a.keep, a.upload_wait, a.claim, a.zone)
 
 
 if __name__ == "__main__":
