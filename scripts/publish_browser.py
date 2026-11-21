@@ -41,7 +41,8 @@ try:
 except Exception:
     pass
 
-DEFAULT_PROFILE = r"D:\autocut_work\chrome-autocut-profile"
+DEFAULT_PROFILE = os.environ.get("AUTOCUT_CHROME_PROFILE",
+                               r"D:\autocut_work\chrome-autocut-profile")
 
 UPLOAD_URLS = {
     "bilibili": "https://member.bilibili.com/platform/upload/video/frame",
@@ -626,7 +627,7 @@ def wait_douyin_ready(page, size_mb: float = 0, max_sec: float = 900) -> bool:
         if el % 20 < 3 or el < 6:
             print(f"    [{int(el):>3}s] 检测中={detecting} 百分比={pcts[:4]} "
                   f"(预计至少 {int(expect)}s)", flush=True)
-        if el >= expect * 0.8 and not detecting and (not pcts or max(pcts) >= 99):
+        if el >= expect * 1.1 and not detecting and (not pcts or max(pcts) >= 99):
             print(f"  ✅ 抖音上传/检测完成(等待 {int(el)}s)")
             return True
         _t.sleep(4)
@@ -668,8 +669,37 @@ def douyin_publish(page, profile: str = "", timeout: float = 120) -> bool:
     return False
 
 
+def douyin_set_cover(page, cover_path: str, profile: str = "") -> bool:
+    """抖音封面:页面有独立 input[type=file][accept*=image],塞图后在裁剪弹窗点保存。"""
+    import time as _t
+    if not cover_path or not os.path.exists(cover_path):
+        return False
+    try:
+        fi = page.locator("input[type=file][accept*='image']").first
+        if fi.count() == 0:
+            print("  ⚠️ 找不到封面图片输入框")
+            return False
+        fi.set_input_files(cover_path)
+        _t.sleep(3)
+        for kw in ("保存", "确定", "确认", "完成", "Save"):
+            try:
+                b = page.locator(f"button:has-text('{kw}')").first
+                if b.count() > 0 and b.is_visible():
+                    b.click(timeout=3000)
+                    print(f"  封面已设置(裁剪确认: {kw})")
+                    _t.sleep(1.5)
+                    return True
+            except Exception:
+                continue
+        print("  封面已提交(未出现裁剪确认)")
+        return True
+    except Exception as e:
+        print("  ⚠️ 封面设置失败:", str(e)[:70])
+        return False
+
+
 def douyin_fill(page, title: str, desc: str, tags: str, private: bool,
-                profile: str) -> bool:
+                profile: str, cover_path: str = "") -> bool:
     """抖音专用填写:标题(≤30字) + 简介(含话题) + 可见范围。"""
     import time as _t
     # 标题:抖音限制 30 字
@@ -718,6 +748,9 @@ def douyin_fill(page, title: str, desc: str, tags: str, private: bool,
                 print("  选可见范围失败:", str(e)[:60])
         if not picked:
             print("  ⚠️ 未选中「仅自己可见」,请人工确认")
+    # 封面(可选但强烈建议:发布时必填)
+    if cover_path:
+        douyin_set_cover(page, cover_path, profile)
     _t.sleep(0.5)
     shot(page, profile, "douyin_filled")
     return True
@@ -831,7 +864,8 @@ def fill_and_upload(page, plat: str, file: str, title: str, desc: str,
 def do_upload(profile: str, plat: str, file: str, title: str, desc: str,
               tags: str, publish: bool, headless: bool, keep: float,
               upload_wait: float = 180, claim: str = "", zone: str = "",
-              draft_mode: bool = False, private: bool = False) -> int:
+              draft_mode: bool = False, private: bool = False,
+              cover: str = "") -> int:
     a_draft_mode = draft_mode
     from playwright.sync_api import sync_playwright
     os.makedirs(profile, exist_ok=True)
@@ -870,7 +904,7 @@ def do_upload(profile: str, plat: str, file: str, title: str, desc: str,
                 if page.locator("input[placeholder*='填写作品标题']").count() > 0:
                     break
             dismiss_dialogs(page, profile, "dy2")
-            ok = douyin_fill(page, title, desc, tags, private, profile)
+            ok = douyin_fill(page, title, desc, tags, private, profile, cover)
             try:
                 size_mb = os.path.getsize(file) / 1e6
             except OSError:
@@ -1092,6 +1126,7 @@ def main() -> int:
     ap.add_argument("--verify", action="store_true", help="用 API 核对稿件状态(推荐)")
     ap.add_argument("--verify-keyword", default="影之刃")
     ap.add_argument("--verify-expect", type=int, default=0)
+    ap.add_argument("--cover", default="", help="封面图片路径(抖音用)")
     ap.add_argument("--private", action="store_true",
                     help="私密上传(抖音:仅自己可见)")
     ap.add_argument("--draft", action="store_true",
@@ -1166,7 +1201,7 @@ def main() -> int:
             rc = do_upload(a.profile, a.platform, j["file"], title, desc,
                            tags, a.publish,
                            a.headless, a.keep, a.upload_wait, a.claim, a.zone,
-                           a.draft, a.private)
+                           a.draft, a.private, a.cover)
             if rc != 0:
                 print("  中断批量")
                 break
@@ -1177,7 +1212,7 @@ def main() -> int:
         return 2
     return do_upload(a.profile, a.platform, a.file, a.title, a.desc, a.tags,
                      a.publish, a.headless, a.keep, a.upload_wait, a.claim, a.zone,
-                     a.draft, a.private)
+                     a.draft, a.private, a.cover)
 
 
 if __name__ == "__main__":
