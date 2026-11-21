@@ -456,6 +456,36 @@ python scripts/publish_browser.py --platform bilibili --manifest "G:\...\manifes
 **为什么默认不点发布**:平台对自动化上传有风控(可能弹验证码/限流/触发审核),
 把"最后一击"留给人是成本最低的稳妥做法。`--publish` 才真点。
 
+### 发布文案规范(用户明确要求,2026-11)
+
+- **简介只写看点**:用「本集看点：」+ 3~4 条 `·` 列表,**不要**写工具名、系列说明、
+  素材来源、剪辑方式。例:
+  ```
+  本集看点：
+  · 怪病肆虐，得病的人像丢了魂，一天天呆下去
+  · 徐空大人的布局浮出水面，主角被整个组织追杀
+  ```
+- **标题不写集数**:纯钩子(悬念/反差/名台词),不加「第X集」「EPx」;靠发布时间和封面区分顺序。
+- 抖音标题偏口语 + 话题标签;YouTube 用「游戏名：钩子」格式。
+
+### 私密验证流程(推荐先跑)
+
+B站 投稿页没有「仅自己可见」,但**存草稿**等价于私密:只有自己能在
+创作中心→稿件管理→草稿 里看到并预览,不会公开。
+```bash
+# 先存草稿(不公开),人工看效果
+python scripts/publish_browser.py --platform bilibili --manifest m.json \
+       --meta meta.json --only 2,3 --draft
+# 确认后再发(立即投稿)
+python scripts/publish_browser.py --platform bilibili --manifest m.json \
+       --meta meta.json --publish
+```
+**上传是否成功的可靠验证**(别只看截图):
+- 草稿:存草稿后页面跳「稿件管理」,读页面上的「草稿 N」计数
+- 已发布/审核中:`GET https://member.bilibili.com/x/web/archives?status=all`
+  → `data.class{pubed,not_pubed,is_pubing}` + `data.arc_audits[].Archive{title,bvid,state}`
+  (`publish_browser.py --verify` 已封装)
+
 **踩坑 1**:`--doctor` 早期版本是"三个平台轮流 goto + 4 秒截图",页面每几秒跳一次,
 用户根本来不及扫码 —— 现在改成逐平台等待(**检测到上传框才算登录成功**),每个平台最多
 `--per-timeout` 秒。

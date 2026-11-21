@@ -889,6 +889,7 @@ def main() -> int:
     ap.add_argument("--tags", default="")
     ap.add_argument("--manifest", help="按 manifest 批量投某平台(从文件名推标题)")
     ap.add_argument("--meta", default="", help="批量模式用的定制文案 JSON")
+    ap.add_argument("--only", default="", help="批量模式只投指定集号,如 2,3,4")
     ap.add_argument("--profile", default=DEFAULT_PROFILE)
     ap.add_argument("--headless", action="store_true")
     ap.add_argument("--publish", action="store_true", help="真的点发布(默认只填不点)")
@@ -941,6 +942,9 @@ def main() -> int:
     if a.manifest:
         man = json.load(open(a.manifest, encoding="utf-8"))
         jobs = [j for j in man.get("jobs", []) if j.get("platform") == a.platform]
+        if a.only:
+            want = {int(x) for x in a.only.split(",") if x.strip().isdigit()}
+            jobs = [j for j in jobs if (j.get("episode") or 0) in want]
         meta_map = {}
         if a.meta and os.path.exists(a.meta):
             md = json.load(open(a.meta, encoding="utf-8"))
