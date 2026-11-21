@@ -603,40 +603,87 @@ def wait_upload_done(page, max_sec: float = 1800, profile: str = "",
     return False
 
 
-def wait_douyin_ready(page, size_mb: float = 0, max_sec: float = 900) -> bool:
-    """等抖音视频上传/检测完成。
+def wait_douyin_ready(page, size_mb: float = 0, max_sec: float = 1800) -> bool:
+    """等抖音上传真正完成。
 
-    ★ 踩坑1:页面静态文案含「上传中」(如"如作品还在上传中,请勿关闭页面"),不能当判据。
-    ★ 踩坑2:顶部「上传成功」是 3 秒的瞬时提示,轮询容易错过。
-    做法:读页面所有百分比;「检测中NN%」是封面检测,上传完成后会消失;
-          再用文件大小粗估耗时(按 5MB/s)做下限,两者都满足才认为就绪。
+    判据(2026-11 实测):页面显示「已上传： 729.3MB/759.7MB」+ 百分比,
+    上传完成后还有「检测中 x%」。
+    ★ 严格以 已上传 比例 >= 99.5% 为准;绝不按估时提前放行
+      —— 之前提前放行导致视频没传完就点发布,发布必然失败。
     """
     import re as _re
     import time as _t
-    expect = (size_mb / 5.0) if size_mb else 30.0
-    expect = max(20.0, min(expect, 600.0))
     t0 = _t.time()
+    seen_progress = False
+    last_print = -999
+    up_done = False
     while _t.time() - t0 < max_sec:
-        el = _t.time() - t0
         try:
             txt = page.locator("body").inner_text()
         except Exception:
             txt = ""
-        pcts = [int(x) for x in _re.findall(r"(\d{1,3})\s*%", txt)]
-        detecting = "检测中" in txt
-        if el % 20 < 3 or el < 6:
-            print(f"    [{int(el):>3}s] 检测中={detecting} 百分比={pcts[:4]} "
-                  f"(预计至少 {int(expect)}s)", flush=True)
-        if el >= expect * 1.1 and not detecting and (not pcts or max(pcts) >= 99):
-            print(f"  ✅ 抖音上传/检测完成(等待 {int(el)}s)")
+        el = int(_t.time() - t0)
+        m = _re.search(r"已上传[:：]?\s*([\d.]+)\s*MB\s*/\s*([\d.]+)\s*MB", txt)
+        if m:
+            seen_progress = True
+            cur, tot = float(m.group(1)), float(m.group(2))
+            ratio = cur / tot if tot else 0
+            if el - last_print >= 10:
+                print(f"  上传中 {ratio*100:5.1f}%  ({cur:.0f}/{tot:.0f} MB)  已用 {el}s", flush=True)
+                last_print = el
+            if ratio >= 0.995:
+                print(f"  ✅ 上传完成({cur:.0f}/{tot:.0f} MB,用时 {el}s)")
+                up_done = True
+                break
+            _t.sleep(4)
+            continue
+        # 上传完成后进度行消失,并出现「重新上传」等标记 -> 视为完成
+        if ("重新上传" in txt) or ("上传完成" in txt):
+            print(f"  ✅ 上传完成(检测到完成标记,用时 {el}s)")
+            break
+        # 没看到进度数字:仍在传(有取消上传/上传中提示)就继续等
+        if ("取消上传" in txt) or ("上传过程中" in txt) or ("检测中" in txt):
+            if el - last_print >= 20:
+                print(f"  [{el}s] 等待上传界面 ...", flush=True)
+                last_print = el
+            _t.sleep(4)
+            continue
+        # 完全没有上传痕迹:可能已完成或未开始;观察一段时间再判断
+        expected = max(120.0, (size_mb / 4.0) * 1.5) if size_mb else 180.0
+        if el >= expected and not seen_progress:
+            sample = [l.strip() for l in txt.split("\n") if ("MB" in l or "%" in l)][:4]
+            print(f"  ⚠️ {int(expected)}s 未观察到上传进度,视为就绪继续 | 文本样本={sample}")
             return True
         _t.sleep(4)
-    print("  ⚠️ 抖音等待超时,仍尝试发布")
+
+    # 上传完成后等「检测中」:先确认它出现(长视频会有),再等它结束
+    t1 = _t.time()
+    appeared = False
+    while _t.time() - t1 < 600:
+        try:
+            txt = page.locator("body").inner_text()
+        except Exception:
+            txt = ""
+        if "检测中" in txt:
+            if not appeared:
+                print("  检测已开始,等待检测结束 ...", flush=True)
+                appeared = True
+            _t.sleep(5)
+            continue
+        # 没检测中:若曾出现过则结束;否则再观察 30s 以捕获延迟启动
+        if appeared:
+            print(f"  ✅ 检测结束(检测阶段 {int(_t.time()-t1)}s)")
+            break
+        if _t.time() - t1 > 40:
+            print("  ✅ 未出现检测阶段(视为秒过)")
+            break
+        _t.sleep(5)
+    print(f"  ✅ 上传/检测流程结束(总等待 {int(_t.time()-t0)}s)")
     return True
 
 
-def douyin_publish(page, profile: str = "", timeout: float = 120) -> bool:
-    """点发布并轮询是否成功(URL 跳转 / 成功提示)。失败时只重试一次,避免重复投稿。"""
+def douyin_publish(page, profile: str = "", timeout: float = 150) -> bool:
+    """点抖音「发布」并轮询是否成功。最多点 2 次,避免重复投稿。"""
     import time as _t
     t0 = _t.time()
     clicked = 0
@@ -646,10 +693,11 @@ def douyin_publish(page, profile: str = "", timeout: float = 120) -> bool:
             if btn.count() > 0 and clicked < 2:
                 cls = (btn.get_attribute("class") or "").lower()
                 if "disabled" not in cls:
-                    btn.click(timeout=8000)
+                    btn.scroll_into_view_if_needed()
+                    btn.click(timeout=10000)
                     clicked += 1
                     print(f"  已点发布(第 {clicked} 次)")
-                    _t.sleep(10)
+                    _t.sleep(12)
         except Exception as e:
             print("  点发布异常:", str(e)[:60])
         try:
@@ -657,16 +705,54 @@ def douyin_publish(page, profile: str = "", timeout: float = 120) -> bool:
             txt = page.locator("body").inner_text()
         except Exception:
             url, txt = "", ""
-        if "content/manage" in url or "manage" in url:
-            print("  ✅ 已跳转作品管理,发布提交成功")
+        if "manage" in url or "content/post" not in url:
+            print(f"  ✅ 页面已跳转,视为提交成功: {url[:80]}")
             return True
-        if ("发布成功" in txt) or ("作品已发布" in txt) or ("已发布" in txt and "暂存" not in txt):
-            print("  ✅ 页面出现发布成功提示")
+        if ("发布成功" in txt) or ("作品已发布" in txt) or ("审核中" in txt):
+            print("  ✅ 页面出现发布成功/审核中提示")
             return True
         _t.sleep(6)
-    print("  ⚠️ 未检测到发布成功,截图留证")
+    print("  ⚠️ 未检测到发布成功")
     shot(page, profile, "dy_publish_uncertain")
     return False
+
+
+def douyin_schedule(page, when: str, profile: str = "") -> bool:
+    """抖音定时发布:选「定时发布」并填日期时间(格式 YYYY-MM-DD HH:MM)。
+
+    实测:日期时间输入框 placeholder='日期和时间',点击后可用键盘直接键入。
+    抖音限制:最早 2 小时后,最晚 14 天内。
+    """
+    import time as _t
+    try:
+        page.locator("label:has-text('定时发布')").first.click(timeout=5000)
+        _t.sleep(1.5)
+        dt = page.locator("input[placeholder='日期和时间']").first
+        if dt.count() == 0:
+            print("  ⚠️ 找不到日期时间输入框")
+            return False
+        dt.scroll_into_view_if_needed()
+        dt.click()
+        _t.sleep(0.8)
+        page.keyboard.press("Control+A")
+        page.keyboard.type(when, delay=30)
+        _t.sleep(0.5)
+        page.keyboard.press("Enter")
+        _t.sleep(1)
+        try:
+            page.mouse.click(30, 300)
+        except Exception:
+            pass
+        _t.sleep(1)
+        val = dt.input_value()
+        ok = val.strip() == when.strip()
+        print(f"  定时发布: {val} ({'✅' if ok else '⚠️ 期望 ' + when})")
+        if profile:
+            shot(page, profile, "dy_schedule_set")
+        return ok
+    except Exception as e:
+        print("  ⚠️ 定时发布设置失败:", str(e)[:80])
+        return False
 
 
 def douyin_set_cover(page, cover_path: str, profile: str = "") -> bool:
@@ -865,7 +951,7 @@ def do_upload(profile: str, plat: str, file: str, title: str, desc: str,
               tags: str, publish: bool, headless: bool, keep: float,
               upload_wait: float = 180, claim: str = "", zone: str = "",
               draft_mode: bool = False, private: bool = False,
-              cover: str = "") -> int:
+              cover: str = "", schedule: str = "") -> int:
     a_draft_mode = draft_mode
     from playwright.sync_api import sync_playwright
     os.makedirs(profile, exist_ok=True)
@@ -891,14 +977,27 @@ def do_upload(profile: str, plat: str, file: str, title: str, desc: str,
                         break
                 except Exception:
                     pass
-            fi = page.locator("input[type=file]").first
-            if fi.count() == 0:
-                print("  ❌ 抖音找不到文件框(未登录?)")
+            # ★ 必须走原生 file chooser:直接给隐藏 input 塞文件时,抖音只会上传约 1MB
+            #   就停止(实测 800MB 文件累计上传 1.0MB、表单随后被重置),
+            #   表现出来的就是"视频没传完、发布不成功"。点「上传视频」按钮触发 chooser 才正常。
+            print(f"  选择文件(原生 chooser): {os.path.basename(file)}")
+            uploaded = False
+            try:
+                with page.expect_file_chooser(timeout=20000) as _fc:
+                    page.locator("text=上传视频").first.click(timeout=8000)
+                _fc.value.set_files(file)
+                uploaded = True
+            except Exception as e:
+                print("  ⚠️ 原生 chooser 失败,回退 set_input_files:", str(e)[:80])
+                fi = page.locator("input[type=file][accept*='video']").first
+                if fi.count() > 0:
+                    fi.set_input_files(file)
+                    uploaded = True
+            if not uploaded:
+                print("  ❌ 抖音上传文件设置失败")
                 shot(page, profile, "dy_nofile")
                 ctx.close()
                 return 2
-            print(f"  选择文件: {os.path.basename(file)}")
-            fi.set_input_files(file)
             for _ in range(90):
                 time.sleep(1)
                 if page.locator("input[placeholder*='填写作品标题']").count() > 0:
@@ -910,6 +1009,8 @@ def do_upload(profile: str, plat: str, file: str, title: str, desc: str,
             except OSError:
                 size_mb = 0
             wait_douyin_ready(page, size_mb, upload_wait)
+            if schedule:
+                douyin_schedule(page, schedule, profile)
             if draft_mode:
                 # 抖音兜底:存草稿(暂存离开),之后可在 App/网页里补封面再发
                 clicked = False
@@ -929,8 +1030,28 @@ def do_upload(profile: str, plat: str, file: str, title: str, desc: str,
                 ctx.close()
                 return 0 if clicked else 3
             if publish:
-                douyin_publish(page, profile)
+                ok = douyin_publish(page, profile)
                 shot(page, profile, "dy_published")
+                # 核对:作品管理里是否出现该标题
+                try:
+                    page.goto("https://creator.douyin.com/creator-micro/content/manage",
+                              wait_until="domcontentloaded", timeout=90000)
+                    time.sleep(14)
+                    dismiss_dialogs(page, profile, "verify")
+                    body = page.locator("body").inner_text()
+                    head = (title[:12] if title else "")
+                    found = head and (head in body)
+                    print(f"  [作品管理核对] 标题出现: {found} | "
+                          f"作品计数: {[l.strip() for l in body.splitlines() if '作品 (' in l]}")
+                    if found:
+                        print("  ✅ 抖音发布成功")
+                        ctx.close()
+                        return 0
+                    print("  ❌ 抖音发布后未在作品列表找到标题")
+                except Exception as e:
+                    print("  核对失败:", str(e)[:80])
+                ctx.close()
+                return 5
             else:
                 print("  ⏸  已填好未发布,浏览器保留 %ds" % int(keep))
                 time.sleep(keep)
@@ -1127,6 +1248,7 @@ def main() -> int:
     ap.add_argument("--verify-keyword", default="影之刃")
     ap.add_argument("--verify-expect", type=int, default=0)
     ap.add_argument("--cover", default="", help="封面图片路径(抖音用)")
+    ap.add_argument("--schedule", default="", help='定时发布 "YYYY-MM-DD HH:MM"(抖音)')
     ap.add_argument("--private", action="store_true",
                     help="私密上传(抖音:仅自己可见)")
     ap.add_argument("--draft", action="store_true",
@@ -1201,7 +1323,7 @@ def main() -> int:
             rc = do_upload(a.profile, a.platform, j["file"], title, desc,
                            tags, a.publish,
                            a.headless, a.keep, a.upload_wait, a.claim, a.zone,
-                           a.draft, a.private, a.cover)
+                           a.draft, a.private, a.cover, a.schedule)
             if rc != 0:
                 print("  中断批量")
                 break
@@ -1212,7 +1334,7 @@ def main() -> int:
         return 2
     return do_upload(a.profile, a.platform, a.file, a.title, a.desc, a.tags,
                      a.publish, a.headless, a.keep, a.upload_wait, a.claim, a.zone,
-                     a.draft, a.private, a.cover)
+                     a.draft, a.private, a.cover, a.schedule)
 
 
 if __name__ == "__main__":
