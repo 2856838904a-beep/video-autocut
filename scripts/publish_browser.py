@@ -684,6 +684,45 @@ def wait_douyin_ready(page, size_mb: float = 0, max_sec: float = 1800) -> bool:
     return True
 
 
+def douyin_upload_once(page, file: str, max_sec: float = 1200) -> str:
+    """点「上传视频」→ 原生 chooser 选文件 → 等结果。返回 'ok' / 'failed' / 'timeout'。
+
+    ★ 实测:抖音网页上传会随机失败(同一文件有时 176s 成功、有时 380s 报「上传失败」),
+      页面在右侧预览区显示「上传失败，重新上传」。必须识别这个状态并重传,
+      否则后续点发布必然失败(视频不在)。
+    """
+    import time as _t
+    try:
+        with page.expect_file_chooser(timeout=25000) as fc:
+            page.locator("text=上传视频").first.click(timeout=10000)
+        fc.value.set_files(file)
+    except Exception as e:
+        print("  选择文件失败:", str(e)[:80])
+        return "failed"
+    t0 = _t.time()
+    while _t.time() - t0 < max_sec:
+        _t.sleep(5)
+        try:
+            txt = page.evaluate("() => document.body.textContent || ''")
+        except Exception:
+            txt = ""
+        el = int(_t.time() - t0)
+        if "上传失败" in txt:
+            print(f"  ❌ 上传失败(用时 {el}s)")
+            return "failed"
+        m = __import__("re").search(r"已上传[:：]?\s*([\d.]+)\s*MB\s*/\s*([\d.]+)\s*MB", txt)
+        if m:
+            cur, tot = float(m.group(1)), float(m.group(2))
+            if el % 20 < 6:
+                print(f"    上传中 {cur/tot*100:.1f}% ({cur:.0f}/{tot:.0f} MB)")
+        elif "重新上传" in txt:
+            # 有「重新上传」但无「上传失败」= 上传完成
+            print(f"  ✅ 上传完成(用时 {el}s)")
+            return "ok"
+    print(f"  ⚠️ 上传超时({int(max_sec)}s)")
+    return "timeout"
+
+
 def douyin_publish(page, profile: str = "", timeout: float = 150) -> bool:
     """点抖音「发布」并轮询是否成功。最多点 2 次,避免重复投稿。"""
     import time as _t
@@ -754,6 +793,57 @@ def douyin_schedule(page, when: str, profile: str = "") -> bool:
         return ok
     except Exception as e:
         print("  ⚠️ 定时发布设置失败:", str(e)[:80])
+        return False
+
+
+def douyin_apply_recommend_cover(page, profile: str = "", wait_sec: float = 120) -> bool:
+    """用抖音平台自己的 AI 推荐封面(不自己传图)。
+
+    实测路径:等 `recommendCover-*` 缩略图生成完毕(不再出现「生成中」)
+      -> 点第一张 -> 弹出「是否确认应用此封面？」-> 点「确定」-> 封面生效。
+    踩坑:只点推荐图不点「确定」时封面不会应用(表现为封面框一直显示"选择封面")。
+    """
+    import time as _t
+    t0 = _t.time()
+    while _t.time() - t0 < wait_sec:
+        st = page.evaluate("""() => ({
+            n: document.querySelectorAll('[class*=recommendCover-]').length,
+            gen: (document.body.textContent||'').includes('生成中'),
+        })""")
+        if st["n"] > 0 and not st["gen"]:
+            break
+        _t.sleep(4)
+    else:
+        print("  ⚠️ AI 推荐封面未就绪,跳过")
+        return False
+    try:
+        cards = page.locator("[class*=recommendCover-]")
+        el = cards.first
+        el.scroll_into_view_if_needed()
+        b = el.bounding_box()
+        if not b:
+            return False
+        page.mouse.click(b["x"] + b["width"] / 2, b["y"] + b["height"] / 2)
+        _t.sleep(2.5)
+        # 确认框:是否确认应用此封面? -> 确定
+        clicked = page.evaluate("""() => {
+            const btns = [...document.querySelectorAll('.semi-modal-footer button, .semi-modal button')];
+            const ok = btns.find(b => (b.innerText || '').trim() === '确定');
+            if (ok) { ok.click(); return true; }
+            return false;
+        }""")
+        if not clicked:
+            # 兜底:主按钮
+            page.locator(".semi-modal-footer .semi-button-primary").first.click(timeout=5000)
+        _t.sleep(3)
+        applied = page.evaluate("""() => [...document.querySelectorAll('.cover-Jg3T4p')]
+            .some(e => (getComputedStyle(e).backgroundImage||'none') !== 'none')""")
+        print(f"  AI 推荐封面: {'✅ 已应用' if applied else '⚠️ 未检测到生效'}")
+        if profile:
+            shot(page, profile, "dy_rec_cover")
+        return applied
+    except Exception as e:
+        print("  ⚠️ 推荐封面失败:", str(e)[:80])
         return False
 
 
@@ -1011,23 +1101,28 @@ def do_upload(profile: str, plat: str, file: str, title: str, desc: str,
             #   就停止(实测 800MB 文件累计上传 1.0MB、表单随后被重置),
             #   表现出来的就是"视频没传完、发布不成功"。点「上传视频」按钮触发 chooser 才正常。
             print(f"  选择文件(原生 chooser): {os.path.basename(file)}")
-            uploaded = False
-            try:
-                with page.expect_file_chooser(timeout=20000) as _fc:
-                    page.locator("text=上传视频").first.click(timeout=8000)
-                _fc.value.set_files(file)
-                uploaded = True
-            except Exception as e:
-                print("  ⚠️ 原生 chooser 失败,回退 set_input_files:", str(e)[:80])
-                fi = page.locator("input[type=file][accept*='video']").first
-                if fi.count() > 0:
-                    fi.set_input_files(file)
-                    uploaded = True
-            if not uploaded:
-                print("  ❌ 抖音上传文件设置失败")
-                shot(page, profile, "dy_nofile")
+            upload_state = "failed"
+            for attempt in range(1, 4):
+                if attempt > 1:
+                    # 失败后先点「重新上传」复位,再重试
+                    for sel in ("text=重新上传", "button:has-text('重新上传')"):
+                        try:
+                            b = page.locator(sel).first
+                            if b.count() > 0:
+                                b.click(force=True, timeout=5000)
+                                time.sleep(2)
+                                break
+                        except Exception:
+                            pass
+                    print(f"  第 {attempt} 次重试上传 ...")
+                upload_state = douyin_upload_once(page, file, upload_wait)
+                if upload_state == "ok":
+                    break
+                shot(page, profile, f"dy_upload_fail_{attempt}")
+            if upload_state != "ok":
+                print("  ❌ 抖音上传多次失败,放弃该条")
                 ctx.close()
-                return 2
+                return 4
             for _ in range(90):
                 time.sleep(1)
                 if page.locator("input[placeholder*='填写作品标题']").count() > 0:
@@ -1040,8 +1135,10 @@ def do_upload(profile: str, plat: str, file: str, title: str, desc: str,
                 size_mb = 0
             wait_douyin_ready(page, size_mb, upload_wait)
             ok = douyin_fill(page, title, desc, tags, private, profile, "")
-            if cover:
-                douyin_set_cover(page, cover, profile)
+            # 封面:长视频「设置封面」是必填项。优先用平台 AI 推荐封面(点推荐图+确定)
+            if not douyin_apply_recommend_cover(page, profile):
+                if cover:
+                    douyin_set_cover(page, cover, profile)
             if schedule:
                 douyin_schedule(page, schedule, profile)
             if draft_mode:
