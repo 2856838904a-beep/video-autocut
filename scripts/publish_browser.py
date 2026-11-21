@@ -370,6 +370,222 @@ def dump_options(profile: str, plat: str, headless: bool,
     return 0
 
 
+def dump_form(profile: str, plat: str, file: str, headless: bool,
+              keywords: list[str], upload_wait: float = 240) -> int:
+    """先选一个文件让投稿表单出现,再把各必填下拉的可选项文案打出来。
+
+    为什么必须带文件:B站/抖音的「创作声明」「分区」等字段**只在选中视频后渲染**,
+    空页面 dump 不到。用几秒的小片段即可,无需真实成片。
+    """
+    from playwright.sync_api import sync_playwright
+    os.makedirs(profile, exist_ok=True)
+    with sync_playwright() as pw:
+        ctx = pw.chromium.launch_persistent_context(
+            profile, channel="chrome", headless=headless, locale="zh-CN",
+            no_viewport=True,
+            args=["--disable-blink-features=AutomationControlled",
+                  "--start-maximized"])
+        page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        page.goto(UPLOAD_URLS[plat], wait_until="domcontentloaded", timeout=60000)
+        time.sleep(4)
+        dismiss_dialogs(page, profile, f"dumpform_{plat}")
+        f = page.locator("input[type=file]").first
+        if f.count() == 0:
+            print("  ❌ 没有文件输入框(未登录?)")
+            ctx.close()
+            return 2
+        f.set_input_files(file)
+        print(f"  已选择测试文件 {os.path.basename(file)},等表单出现 ...")
+        sel = SELECTORS[plat]
+        t0 = time.time()
+        while time.time() - t0 < upload_wait:
+            time.sleep(2)
+            if first_visible(page, sel["title"], timeout=1.0):
+                break
+        dismiss_dialogs(page, profile, f"dumpform2_{plat}")
+        for kw in keywords:
+            print(f"\n--- 下拉「{kw}」的可选项 ---")
+            try:
+                page.get_by_text(kw, exact=False).first.click(timeout=5000)
+                time.sleep(1.2)
+                opts = []
+                for one in ("li", "[class*='option']", "[role='option']"):
+                    loc = page.locator(one)
+                    for i in range(min(loc.count(), 50)):
+                        try:
+                            e = loc.nth(i)
+                            if not e.is_visible():
+                                continue
+                            t = (e.inner_text() or "").strip().replace("\n", " ")
+                            if t and len(t) <= 40 and t not in opts:
+                                opts.append(t)
+                        except Exception:
+                            continue
+                print(f"  {len(opts)} 个候选:")
+                for t in opts[:40]:
+                    print(f"    · {t}")
+                page.keyboard.press("Escape")
+                time.sleep(0.5)
+            except Exception as e:
+                print(f"  打开失败: {e}")
+                page.keyboard.press("Escape")
+        shot(page, profile, f"dumpform_{plat}")
+        print("\n截图:", shot(page, profile, f"dumpform_done_{plat}"))
+        ctx.close()
+    return 0
+
+
+def select_cover(page, profile: str = "", tag: str = "",
+                 wait_sec: float = 120) -> bool:
+    """选择封面(B站必填,不选点投稿会被拦)。
+
+    实测要点:
+      · 封面区: .cover-empty(添加封面) + .cover-recommend-list(系统推荐帧)
+      · **推荐帧是视频上传后异步生成的**,刚上传完可能只有「AI生成」占位,
+        要等 .img-item-cover 出现再点(直接点会 no-op)
+      · 选中后 .cover-empty 会被封面图替换
+    """
+    import time as _t
+    try:
+        if page.locator(".cover-empty").count() == 0:
+            print("  封面已存在")
+            return True
+        # 已上传文件但推荐帧可能还没生成 —— 先等
+        print("  等待系统推荐封面帧 ...")
+        t0 = _t.time()
+        got = False
+        while _t.time() - t0 < wait_sec:
+            if page.locator(".img-item-cover").count() > 0:
+                got = True
+                break
+            _t.sleep(3)
+        if not got:
+            print("  ⚠️ 推荐帧未生成,尝试打开「添加封面」")
+        # 点第一张推荐帧
+        for sel in (".cover-recommend-list .img-item-cover",
+                    ".img-item-cover",
+                    ".cover-recommend-list .card .img-item-box"):
+            loc = page.locator(sel).first
+            try:
+                if loc.count() > 0:
+                    loc.click(timeout=6000)
+                    _t.sleep(2.5)
+                    if page.locator(".cover-empty").count() == 0:
+                        print("  ✅ 封面已选(系统推荐帧)")
+                        shot(page, profile, f"cover_ok_{tag}")
+                        return True
+                    print("  点了 {} 但封面仍未设置,截图: {}".format(
+                        sel, shot(page, profile, f"cover_try_{tag}")))
+            except Exception as e:
+                print("  点击封面失败", str(e)[:70])
+        print("  ⚠️ 封面选择失败(投稿会被拦)")
+        shot(page, profile, f"coverfail_{tag}")
+        return False
+    except Exception as e:
+        print(f"  ⚠️ 封面选择异常: {e}")
+        return False
+
+
+def select_claim(page, want: str, profile: str = "", tag: str = "") -> bool:
+    """B站「创作声明」必填下拉。
+
+    实测结构(2026-11):
+      · 声明在「更多设置（含声明与权益…）」折叠区里,先点开
+      · 控件: .creation-statement-container [class*='select']
+      · 选项渲染成 .bcc-option,文案例如「内容为自制：未经作者允许，禁止转载」
+    """
+    try:
+        # 1) 展开更多设置
+        try:
+            page.get_by_text("更多设置", exact=False).first.click(timeout=3000)
+            time.sleep(1.0)
+        except Exception:
+            pass
+        # 2) 点开声明下拉
+        box = page.locator(".creation-statement-container [class*='select']").first
+        if box.count() == 0:
+            print("  ⚠️ 找不到创作声明下拉")
+            return False
+        box.click(timeout=5000)
+        time.sleep(1.5)
+        # 等选项列表真的渲染出来(没渲染就点,等于没点)
+        for _ in range(10):
+            if page.locator(".bcc-option").count() > 0:
+                break
+            time.sleep(0.5)
+        # 3) 选项:优先精确匹配文案,其次包含匹配
+        for sel in (f".bcc-option:has-text('{want}')",
+                    f"text={want}",
+                    f".bcc-option:has-text('{want[:6]}')"):
+            opt = page.locator(sel).first
+            try:
+                if opt.count() > 0 and opt.is_visible():
+                    opt.click(timeout=3000)
+                    time.sleep(1.2)
+                    # 校验:placeholder 文案应消失,容器内应出现所选声明
+                    body = page.locator(".creation-statement-container").first.inner_text()
+                    if "请选择" not in body:
+                        print(f"  创作声明已选并校验: {want}")
+                        shot(page, profile, f"claim_{tag}")
+                        return True
+                    print("  点击了选项但未生效,重试")
+            except Exception:
+                continue
+        # 兜底:选「内容为自制」
+        for alt in ("内容为自制", "内容无需标注"):
+            opt = page.locator(f".bcc-option:has-text('{alt}')").first
+            try:
+                if opt.count() > 0 and opt.is_visible():
+                    opt.click(timeout=3000)
+                    print(f"  创作声明按兜底选了: {alt}")
+                    return True
+            except Exception:
+                continue
+        print("  ⚠️ 没选中创作声明")
+        return False
+    except Exception as e:
+        print(f"  ⚠️ 创作声明选择异常: {e}")
+        return False
+
+
+def wait_upload_done(page, max_sec: float = 1800, profile: str = "",
+                     tag: str = "") -> bool:
+    """等视频**上传+转码完成**再点投稿/存草稿。
+
+    ★ 踩坑:大文件(995MB)选中文件几秒后页面就出现标题框(其实还在后台传),
+      此时点「存草稿」不会生效、页面也不报错 —— 必须等进度条消失。
+      进度条形态: "62.7MB/948.8MB  当前速度 6.8MB/s  剩余 2.2 分钟"
+    """
+    import re as _re
+    import time as _t
+    t0 = _t.time()
+    last = ""
+    while _t.time() - t0 < max_sec:
+        try:
+            txt = page.locator("body").inner_text()
+        except Exception:
+            txt = ""
+        m = _re.search(r"(\d+(?:\.\d+)?)\s*MB\s*/\s*(\d+(?:\.\d+)?)\s*MB", txt)
+        if m:
+            cur, tot = float(m.group(1)), float(m.group(2))
+            pct = cur / tot * 100 if tot else 0
+            line = f"  上传中 {pct:5.1f}%  ({cur:.0f}/{tot:.0f} MB)  已用 {int(_t.time()-t0)}s"
+            if line != last:
+                print(line, flush=True)
+                last = line
+            _t.sleep(4)
+            continue
+        # 没有进度条了:再确认没有"转码/处理中"提示
+        if ("转码" in txt or "处理中" in txt or "上传中" in txt):
+            _t.sleep(4)
+            continue
+        print(f"  ✅ 上传/转码完成(等待 {int(_t.time()-t0)}s)")
+        return True
+    print(f"  ⚠️ 等待上传超时({int(max_sec)}s)")
+    shot(page, profile, f"uploadtimeout_{tag}")
+    return False
+
+
 def fill_and_upload(page, plat: str, file: str, title: str, desc: str,
                     tags: str, profile: str, upload_wait: float = 180,
                     claim: str = "", zone: str = "") -> bool:
@@ -452,12 +668,24 @@ def fill_and_upload(page, plat: str, file: str, title: str, desc: str,
             except Exception as e:
                 print(f"  ⚠️ 标签填写失败: {e}")
 
-    # 5) B站必填:创作声明 / 分区
+    # 5) B站必填:创作声明 + 封面(分区默认"游戏",但测试片段可能被判成别的)
+    if plat == "bilibili" and zone:
+        try:
+            cur = page.locator(".form-item:has-text('分区')").first.inner_text()
+            if zone not in cur:
+                page.locator(".form-item:has-text('分区') [class*='select']").first.click(timeout=4000)
+                time.sleep(1)
+                opt = page.locator(".bcc-option:has-text('{}')".format(zone)).first
+                if opt.count() > 0:
+                    opt.click(timeout=3000)
+                    print(f"  分区已设为: {zone}")
+                    time.sleep(0.5)
+        except Exception as e:
+            print("  分区设置跳过:", str(e)[:60])
+    # 5b) B站必填:创作声明 + 封面
     if plat == "bilibili":
-        if claim:
-            pick_dropdown(page, "创作声明", claim, profile, plat)
-        if zone:
-            pick_dropdown(page, "分区", zone, profile, plat)
+        select_claim(page, claim or "内容为自制：未经作者允许，禁止转载", profile, plat)
+        select_cover(page, profile, plat)
 
     print("  截图:", shot(page, profile, f"filled_{plat}"))
     return True
@@ -465,7 +693,9 @@ def fill_and_upload(page, plat: str, file: str, title: str, desc: str,
 
 def do_upload(profile: str, plat: str, file: str, title: str, desc: str,
               tags: str, publish: bool, headless: bool, keep: float,
-              upload_wait: float = 180) -> int:
+              upload_wait: float = 180, claim: str = "", zone: str = "",
+              draft_mode: bool = False) -> int:
+    a_draft_mode = draft_mode
     from playwright.sync_api import sync_playwright
     os.makedirs(profile, exist_ok=True)
     with sync_playwright() as pw:
@@ -481,6 +711,71 @@ def do_upload(profile: str, plat: str, file: str, title: str, desc: str,
         if not ok:
             ctx.close()
             return 2
+        print("  等待上传/转码完成 ...")
+        wait_upload_done(page, max_sec=1800, profile=profile, tag=plat)
+
+        if a_draft_mode:
+            # 私有验证: 存草稿(只有自己能看见,不公开)
+            # 实测: 按钮在底部 submit-actions 里,文案是「存草稿」,需要滚动到底部
+            print("  滚动到底部找「存草稿」...")
+            page.keyboard.press("End")
+            time.sleep(1.2)
+            page.mouse.wheel(0, 4000)
+            time.sleep(1.0)
+            btn = None
+            for sel in ("span.submit-button-anchor:has-text('存草稿')",
+                        "div.submit-actions >> text=存草稿",
+                        "text=存草稿",
+                        "button:has-text('存草稿')"):
+                loc = page.locator(sel).first
+                try:
+                    if loc.count() > 0:
+                        btn = loc
+                        print(f"  找到存草稿按钮: {sel}")
+                        break
+                except Exception:
+                    continue
+            if not btn:
+                print("  ❌ 找不到「存草稿」按钮,截图:", shot(page, profile, f"nodraft_{plat}"))
+                ctx.close()
+                return 3
+            try:
+                btn.scroll_into_view_if_needed(timeout=5000)
+            except Exception:
+                pass
+            btn.click(force=True, timeout=10000)
+            print("  💾 已点存草稿,等待 15 秒")
+            time.sleep(15)
+            # 保存后 B站 会跳转到「稿件管理」,页面顶部有「草稿 N」——这是最直接的验证
+            try:
+                txt = page.locator("body").inner_text()
+                import re as _re
+                m = _re.search(r"草稿\s*(\d+)", txt)
+                if m:
+                    print(f"  ✅ 验证:稿件管理里「草稿」数量 = {m.group(1)}")
+                else:
+                    print("  页面未出现「草稿 N」计数,当前 URL:", page.url)
+            except Exception as e:
+                print("  草稿数量读取失败:", str(e)[:80])
+            print("  截图:", shot(page, profile, f"draft_saved_{plat}"))
+            # ---- 点击后立刻用 API 自检(最可靠的"是否成功") ----
+            try:
+                r = page.request.get(
+                    "https://member.bilibili.com/x/web/archives?pn=1&ps=20&status=all",
+                    timeout=20000)
+                j = r.json()
+                data = j.get("data") or {}
+                cls = data.get("class") or {}
+                print(f"  [API 自检] 已发布 {cls.get('pubed')} / "
+                      f"未发布 {cls.get('not_pubed')} / 审核中 {cls.get('is_pubing')}")
+                hits = [a.get("Archive", {}).get("title", "")
+                        for a in (data.get("arc_audits") or [])
+                        if a.get("Archive", {}).get("title")]
+                print("  最近稿件:", " | ".join(hits[:3]) if hits else "(无)")
+            except Exception as e:
+                print("  [API 自检] 失败:", str(e)[:90])
+            ctx.close()
+            return 0
         if publish:
             btn = first_visible(page, SELECTORS[plat]["publish"], timeout=8)
             if not btn:
@@ -508,6 +803,83 @@ def do_upload(profile: str, plat: str, file: str, title: str, desc: str,
     return 0
 
 
+def verify_bili(profile: str, keyword: str, expect: int = 0,
+                show: int = 30) -> int:
+    """用 B站 创作中心内部 API 精确核对稿件状态(比看截图可靠)。
+
+    实测可用的端点:
+      GET https://member.bilibili.com/x/web/archives?pn=1&ps=50&status=all
+      -> data.class {pubed,not_pubed,is_pubing}, data.arc_audits[].Archive{title,bvid,state,...}
+    """
+    from playwright.sync_api import sync_playwright
+    os.makedirs(profile, exist_ok=True)
+    found = []
+    classes = {}
+    with sync_playwright() as pw:
+        ctx = pw.chromium.launch_persistent_context(
+            profile, channel="chrome", headless=True, locale="zh-CN",
+            args=["--disable-blink-features=AutomationControlled"])
+        page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        page.goto("https://member.bilibili.com/platform/home",
+                  wait_until="domcontentloaded", timeout=60000)
+        time.sleep(3)
+        for status in ("all", "draft", "not_pubed", "is_pubing"):
+            url = (f"https://member.bilibili.com/x/web/archives?"
+                   f"pn=1&ps=50&status={status}")
+            try:
+                r = page.request.get(url, timeout=20000)
+                j = r.json()
+            except Exception as e:
+                print(f"[{status}] 请求失败: {str(e)[:100]}")
+                continue
+            data = j.get("data") or {}
+            cls = data.get("class") or {}
+            if cls:
+                classes = cls
+            audits = data.get("arc_audits") or []
+            page_info = data.get("page") or {}
+            print(f"[{status}] code={j.get('code')} 总{page_info.get('count')}条 "
+                  f"class={cls} 本页{len(audits)}条")
+            for a in audits:
+                arc = a.get("Archive") or {}
+                title = arc.get("title") or ""
+                if keyword and keyword not in title:
+                    continue
+                found.append({
+                    "title": title,
+                    "bvid": arc.get("bvid"),
+                    "state": arc.get("state"),
+                    "state_desc": arc.get("state_desc"),
+                    "ctime": arc.get("ctime") or arc.get("pubtime"),
+                    "reject": arc.get("reject_reason"),
+                    "status": status,
+                })
+        ctx.close()
+
+    print("\n=== 稿件分类统计 ===")
+    print(f"  已发布 {classes.get('pubed')} / 未发布 {classes.get('not_pubed')} / "
+          f"审核中 {classes.get('is_pubing')}")
+
+    print(f"\n=== 匹配「{keyword}」的稿件 ({len(found)} 条) ===")
+    for f in found[:show]:
+        line = (f"  · {f['title'][:60]}\n"
+                f"      bvid={f['bvid']} state={f['state']}({f['state_desc']}) "
+                f"status={f['status']}")
+        print(line)
+        if f.get("reject"):
+            print(f"      驳回原因: {str(f['reject'])[:120]}")
+    if not found:
+        print("  （没有匹配稿件）")
+
+    if expect and len(found) < expect:
+        print(f"\n❌ 期望至少 {expect} 条,实际 {len(found)} 条 —— 上传可能未成功")
+        return 1
+    if found:
+        print(f"\n✅ 核对通过: {len(found)} 条稿件在账号里")
+        return 0
+    return 1
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--platform", choices=list(UPLOAD_URLS))
@@ -516,9 +888,15 @@ def main() -> int:
     ap.add_argument("--desc", default="")
     ap.add_argument("--tags", default="")
     ap.add_argument("--manifest", help="按 manifest 批量投某平台(从文件名推标题)")
+    ap.add_argument("--meta", default="", help="批量模式用的定制文案 JSON")
     ap.add_argument("--profile", default=DEFAULT_PROFILE)
     ap.add_argument("--headless", action="store_true")
     ap.add_argument("--publish", action="store_true", help="真的点发布(默认只填不点)")
+    ap.add_argument("--verify", action="store_true", help="用 API 核对稿件状态(推荐)")
+    ap.add_argument("--verify-keyword", default="影之刃")
+    ap.add_argument("--verify-expect", type=int, default=0)
+    ap.add_argument("--draft", action="store_true",
+                    help="保存草稿(私有验证:只有自己能看见)")
     ap.add_argument("--keep", type=float, default=180, help="不发布时浏览器保留秒数")
     ap.add_argument("--claim", default="", help="B站创作声明(如 '内容无需声明')")
     ap.add_argument("--zone", default="游戏", help="B站分区(默认 游戏)")
@@ -526,6 +904,10 @@ def main() -> int:
                     help="提交文件后等待上传/转码完成的最长秒数")
     ap.add_argument("--doctor", action="store_true", help="打开三个平台页面供登录")
     ap.add_argument("--check-login", action="store_true", help="检查三个平台登录态")
+    ap.add_argument("--dump-form", action="store_true",
+                    help="先选文件让表单出现,再 dump 必填下拉选项")
+    ap.add_argument("--dump-form-file", default="",
+                    help="dump-form 用的小测试片段")
     ap.add_argument("--dump-options", action="store_true",
                     help="读取必填下拉的选项文案(配合 --platform)")
     ap.add_argument("--dump-keywords", default="创作声明,分区",
@@ -536,6 +918,15 @@ def main() -> int:
                     help="doctor 模式每个平台等待登录的最长秒数(默认 600)")
     a = ap.parse_args()
 
+    if a.verify:
+        return verify_bili(a.profile, a.verify_keyword, a.verify_expect)
+    if a.dump_form:
+        kws = [x.strip() for x in a.dump_keywords.split(",") if x.strip()]
+        f = a.dump_form_file or a.file
+        if not f:
+            print("需要 --dump-form-file 指向一个小视频", file=sys.stderr)
+            return 2
+        return dump_form(a.profile, a.platform or "bilibili", f, a.headless, kws)
     if a.dump_options:
         kws = [x.strip() for x in a.dump_keywords.split(",") if x.strip()]
         return dump_options(a.profile, a.platform or "bilibili", a.headless, kws)
@@ -550,6 +941,10 @@ def main() -> int:
     if a.manifest:
         man = json.load(open(a.manifest, encoding="utf-8"))
         jobs = [j for j in man.get("jobs", []) if j.get("platform") == a.platform]
+        meta_map = {}
+        if a.meta and os.path.exists(a.meta):
+            md = json.load(open(a.meta, encoding="utf-8"))
+            meta_map = md.get("episodes", {})
         if not jobs:
             print(f"manifest 里没有 {a.platform} 的成片")
             return 2
@@ -557,10 +952,19 @@ def main() -> int:
         for j in jobs:
             ep = j.get("episode") or 0
             title = f"影之刃 | 高光节拍 第{ep:02d}集"
+            desc = a.desc
+            tags = a.tags or "影之刃,游戏剪辑,高光时刻"
+            m = meta_map.get(str(ep), {}).get(a.platform) or {}
+            if m:
+                title = m.get("title") or title
+                desc = m.get("desc") or desc
+                tags = m.get("tags") or tags
+                print(f"  使用定制文案: {title[:40]}...")
             print(f"\n=== 投 {os.path.basename(j['file'])} ===")
-            rc = do_upload(a.profile, a.platform, j["file"], title, a.desc,
-                           a.tags or "影之刃,游戏剪辑,高光时刻", a.publish,
-                           a.headless, a.keep, a.upload_wait, a.claim, a.zone)
+            rc = do_upload(a.profile, a.platform, j["file"], title, desc,
+                           tags, a.publish,
+                           a.headless, a.keep, a.upload_wait, a.claim, a.zone,
+                           a.draft)
             if rc != 0:
                 print("  中断批量")
                 break
@@ -570,7 +974,8 @@ def main() -> int:
         print("需要 --file(或 --manifest)", file=sys.stderr)
         return 2
     return do_upload(a.profile, a.platform, a.file, a.title, a.desc, a.tags,
-                     a.publish, a.headless, a.keep, a.upload_wait, a.claim, a.zone)
+                     a.publish, a.headless, a.keep, a.upload_wait, a.claim, a.zone,
+                     a.draft)
 
 
 if __name__ == "__main__":
