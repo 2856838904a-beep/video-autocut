@@ -513,34 +513,48 @@ def select_claim(page, want: str, profile: str = "", tag: str = "") -> bool:
             if page.locator(".bcc-option").count() > 0:
                 break
             time.sleep(0.5)
-        # 3) 选项:优先精确匹配文案,其次包含匹配
-        for sel in (f".bcc-option:has-text('{want}')",
-                    f"text={want}",
-                    f".bcc-option:has-text('{want[:6]}')"):
+        # 3) 选项:实测 B站 选项是 <article> 包裹(「内容为自制」还在独立的授权声明分组里),
+        #    点 .bcc-option 往往无效或选错,必须点 article
+        def _val():
+            try:
+                return page.evaluate("""() => {
+                    const c = document.querySelector('.creation-statement-container');
+                    const i = c ? c.querySelector('input') : null;
+                    return i ? (i.value || '') : '';
+                }""")
+            except Exception:
+                return ""
+        for sel in (f"article:has-text('{want}')",
+                    f".creation-statement-container article:has-text('{want[:8]}')",
+                    f".bcc-option:has-text('{want}')",
+                    f"text={want}"):
             opt = page.locator(sel).first
             try:
-                if opt.count() > 0 and opt.is_visible():
-                    opt.click(timeout=3000)
+                if opt.count() > 0:
+                    opt.click(timeout=3000, force=True)
                     time.sleep(1.2)
-                    # 校验:placeholder 文案应消失,容器内应出现所选声明
-                    body = page.locator(".creation-statement-container").first.inner_text()
-                    if "请选择" not in body:
-                        print(f"  创作声明已选并校验: {want}")
+                    v = _val()
+                    if v:
+                        print(f"  创作声明已选并校验(input.value): {v}")
                         shot(page, profile, f"claim_{tag}")
                         return True
-                    print("  点击了选项但未生效,重试")
+                    print("  点击了选项但 input.value 仍为空,重试")
             except Exception:
                 continue
-        # 兜底:选「内容为自制」
+        # 兜底:选「内容为自制」/「内容无需标注」
         for alt in ("内容为自制", "内容无需标注"):
-            opt = page.locator(f".bcc-option:has-text('{alt}')").first
-            try:
-                if opt.count() > 0 and opt.is_visible():
-                    opt.click(timeout=3000)
-                    print(f"  创作声明按兜底选了: {alt}")
-                    return True
-            except Exception:
-                continue
+            for sel in (f"article:has-text('{alt}')", f".bcc-option:has-text('{alt}')"):
+                try:
+                    opt = page.locator(sel).first
+                    if opt.count() > 0:
+                        opt.click(timeout=3000, force=True)
+                        time.sleep(1.0)
+                        v = _val()
+                        if v:
+                            print(f"  创作声明按兜底选了: {v}")
+                            return True
+                except Exception:
+                    continue
         print("  ⚠️ 没选中创作声明")
         return False
     except Exception as e:
