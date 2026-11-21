@@ -63,11 +63,13 @@ SELECTORS = {
     },
     "douyin": {
         "file": ["input[type=file]"],
-        "title": ["input[placeholder*='标题']", "input[placeholder*='作品']",
-                  "input[type=text]"],
-        "desc": ["div[contenteditable='true']", "textarea"],
-        "tags": ["input[placeholder*='标签']", "div[contenteditable='true']"],
-        "publish": ["button:has-text('发布')", "div:has-text('发布')"],
+        "title": ["input[placeholder*='填写作品标题']", "input[placeholder*='作品']"],
+        "desc": ["div.zone-container", "div[contenteditable='true'].editor-kit-container",
+                 "div[contenteditable='true']"],
+        "tags": [],
+        "publish": ["button:has-text('发布')", "button.button-dhlUZE.primary-cECiOJ"],
+        "private": ["label:has-text('仅自己可见')", "text=仅自己可见"],
+        "ready": ["text=上传成功"],
     },
     "youtube": {
         "file": ["input[type=file]"],
@@ -600,6 +602,127 @@ def wait_upload_done(page, max_sec: float = 1800, profile: str = "",
     return False
 
 
+def wait_douyin_ready(page, size_mb: float = 0, max_sec: float = 900) -> bool:
+    """等抖音视频上传/检测完成。
+
+    ★ 踩坑1:页面静态文案含「上传中」(如"如作品还在上传中,请勿关闭页面"),不能当判据。
+    ★ 踩坑2:顶部「上传成功」是 3 秒的瞬时提示,轮询容易错过。
+    做法:读页面所有百分比;「检测中NN%」是封面检测,上传完成后会消失;
+          再用文件大小粗估耗时(按 5MB/s)做下限,两者都满足才认为就绪。
+    """
+    import re as _re
+    import time as _t
+    expect = (size_mb / 5.0) if size_mb else 30.0
+    expect = max(20.0, min(expect, 600.0))
+    t0 = _t.time()
+    while _t.time() - t0 < max_sec:
+        el = _t.time() - t0
+        try:
+            txt = page.locator("body").inner_text()
+        except Exception:
+            txt = ""
+        pcts = [int(x) for x in _re.findall(r"(\d{1,3})\s*%", txt)]
+        detecting = "检测中" in txt
+        if el % 20 < 3 or el < 6:
+            print(f"    [{int(el):>3}s] 检测中={detecting} 百分比={pcts[:4]} "
+                  f"(预计至少 {int(expect)}s)", flush=True)
+        if el >= expect * 0.8 and not detecting and (not pcts or max(pcts) >= 99):
+            print(f"  ✅ 抖音上传/检测完成(等待 {int(el)}s)")
+            return True
+        _t.sleep(4)
+    print("  ⚠️ 抖音等待超时,仍尝试发布")
+    return True
+
+
+def douyin_publish(page, profile: str = "", timeout: float = 120) -> bool:
+    """点发布并轮询是否成功(URL 跳转 / 成功提示)。失败时只重试一次,避免重复投稿。"""
+    import time as _t
+    t0 = _t.time()
+    clicked = 0
+    while _t.time() - t0 < timeout:
+        try:
+            btn = page.locator("button:has-text('发布')").last
+            if btn.count() > 0 and clicked < 2:
+                cls = (btn.get_attribute("class") or "").lower()
+                if "disabled" not in cls:
+                    btn.click(timeout=8000)
+                    clicked += 1
+                    print(f"  已点发布(第 {clicked} 次)")
+                    _t.sleep(10)
+        except Exception as e:
+            print("  点发布异常:", str(e)[:60])
+        try:
+            url = page.url
+            txt = page.locator("body").inner_text()
+        except Exception:
+            url, txt = "", ""
+        if "content/manage" in url or "manage" in url:
+            print("  ✅ 已跳转作品管理,发布提交成功")
+            return True
+        if ("发布成功" in txt) or ("作品已发布" in txt) or ("已发布" in txt and "暂存" not in txt):
+            print("  ✅ 页面出现发布成功提示")
+            return True
+        _t.sleep(6)
+    print("  ⚠️ 未检测到发布成功,截图留证")
+    shot(page, profile, "dy_publish_uncertain")
+    return False
+
+
+def douyin_fill(page, title: str, desc: str, tags: str, private: bool,
+                profile: str) -> bool:
+    """抖音专用填写:标题(≤30字) + 简介(含话题) + 可见范围。"""
+    import time as _t
+    # 标题:抖音限制 30 字
+    t = page.locator("input[placeholder*='填写作品标题']").first
+    if t.count() == 0:
+        t = page.locator("input[placeholder*='标题']").first
+    if t.count() > 0:
+        short = title if len(title) <= 30 else title[:30]
+        t.click()
+        t.fill("")
+        t.type(short, delay=15)
+        print(f"  标题({len(short)}字): {short}")
+    else:
+        print("  ⚠️ 抖音标题框未找到")
+        return False
+
+    # 简介 + 话题
+    body_text = desc or ""
+    tag_list = [x.strip() for x in (tags or "").split(",") if x.strip()]
+    if tag_list:
+        body_text = body_text + " " + " ".join("#" + t2 for t2 in tag_list[:5])
+    if body_text:
+        ed = page.locator("div.zone-container").first
+        if ed.count() == 0:
+            ed = page.locator("div[contenteditable='true']").first
+        if ed.count() > 0:
+            ed.click()
+            _t.sleep(0.5)
+            for line in body_text.split("\n"):
+                page.keyboard.type(line[:200], delay=8)
+                page.keyboard.press("Enter")
+            print(f"  简介已填({len(body_text)}字,含 {len(tag_list)} 个话题)")
+
+    # 可见范围:仅自己可见
+    if private:
+        picked = False
+        for sel in ("label:has-text('仅自己可见')", "text=仅自己可见"):
+            loc = page.locator(sel).first
+            try:
+                if loc.count() > 0:
+                    loc.click(timeout=5000)
+                    picked = True
+                    print("  可见范围: 已选「仅自己可见」")
+                    break
+            except Exception as e:
+                print("  选可见范围失败:", str(e)[:60])
+        if not picked:
+            print("  ⚠️ 未选中「仅自己可见」,请人工确认")
+    _t.sleep(0.5)
+    shot(page, profile, "douyin_filled")
+    return True
+
+
 def fill_and_upload(page, plat: str, file: str, title: str, desc: str,
                     tags: str, profile: str, upload_wait: float = 180,
                     claim: str = "", zone: str = "") -> bool:
@@ -708,7 +831,7 @@ def fill_and_upload(page, plat: str, file: str, title: str, desc: str,
 def do_upload(profile: str, plat: str, file: str, title: str, desc: str,
               tags: str, publish: bool, headless: bool, keep: float,
               upload_wait: float = 180, claim: str = "", zone: str = "",
-              draft_mode: bool = False) -> int:
+              draft_mode: bool = False, private: bool = False) -> int:
     a_draft_mode = draft_mode
     from playwright.sync_api import sync_playwright
     os.makedirs(profile, exist_ok=True)
@@ -720,6 +843,65 @@ def do_upload(profile: str, plat: str, file: str, title: str, desc: str,
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.goto(UPLOAD_URLS[plat], wait_until="domcontentloaded", timeout=60000)
         time.sleep(5)
+        if plat == "douyin":
+            # 抖音:选文件 -> 等表单 -> 专用填写 -> 等上传完成 -> 发布
+            dismiss_dialogs(page, profile, "dy")
+            # 上次未完成的视频会弹「继续编辑/放弃」,选放弃,避免混入旧草稿
+            for kw in ("放弃", "放弃编辑"):
+                try:
+                    loc = page.get_by_text(kw, exact=True).first
+                    if loc.count() > 0:
+                        loc.click(timeout=3000)
+                        print("  已放弃上次未发布的视频")
+                        time.sleep(2)
+                        break
+                except Exception:
+                    pass
+            fi = page.locator("input[type=file]").first
+            if fi.count() == 0:
+                print("  ❌ 抖音找不到文件框(未登录?)")
+                shot(page, profile, "dy_nofile")
+                ctx.close()
+                return 2
+            print(f"  选择文件: {os.path.basename(file)}")
+            fi.set_input_files(file)
+            for _ in range(90):
+                time.sleep(1)
+                if page.locator("input[placeholder*='填写作品标题']").count() > 0:
+                    break
+            dismiss_dialogs(page, profile, "dy2")
+            ok = douyin_fill(page, title, desc, tags, private, profile)
+            try:
+                size_mb = os.path.getsize(file) / 1e6
+            except OSError:
+                size_mb = 0
+            wait_douyin_ready(page, size_mb, upload_wait)
+            if draft_mode:
+                # 抖音兜底:存草稿(暂存离开),之后可在 App/网页里补封面再发
+                clicked = False
+                for sel in ("button:has-text('暂存离开')", "text=暂存离开"):
+                    try:
+                        loc = page.locator(sel).first
+                        if loc.count() > 0:
+                            loc.scroll_into_view_if_needed()
+                            loc.click(timeout=8000)
+                            clicked = True
+                            print("  💾 已点「暂存离开」(存草稿)")
+                            break
+                    except Exception as e:
+                        print("  暂存失败:", str(e)[:60])
+                time.sleep(8)
+                shot(page, profile, "dy_draft_saved")
+                ctx.close()
+                return 0 if clicked else 3
+            if publish:
+                douyin_publish(page, profile)
+                shot(page, profile, "dy_published")
+            else:
+                print("  ⏸  已填好未发布,浏览器保留 %ds" % int(keep))
+                time.sleep(keep)
+            ctx.close()
+            return 0
         ok = fill_and_upload(page, plat, file, title, desc, tags, profile,
                              upload_wait, claim, zone)
         if not ok:
@@ -910,6 +1092,8 @@ def main() -> int:
     ap.add_argument("--verify", action="store_true", help="用 API 核对稿件状态(推荐)")
     ap.add_argument("--verify-keyword", default="影之刃")
     ap.add_argument("--verify-expect", type=int, default=0)
+    ap.add_argument("--private", action="store_true",
+                    help="私密上传(抖音:仅自己可见)")
     ap.add_argument("--draft", action="store_true",
                     help="保存草稿(私有验证:只有自己能看见)")
     ap.add_argument("--keep", type=float, default=180, help="不发布时浏览器保留秒数")
@@ -982,7 +1166,7 @@ def main() -> int:
             rc = do_upload(a.profile, a.platform, j["file"], title, desc,
                            tags, a.publish,
                            a.headless, a.keep, a.upload_wait, a.claim, a.zone,
-                           a.draft)
+                           a.draft, a.private)
             if rc != 0:
                 print("  中断批量")
                 break
@@ -993,7 +1177,7 @@ def main() -> int:
         return 2
     return do_upload(a.profile, a.platform, a.file, a.title, a.desc, a.tags,
                      a.publish, a.headless, a.keep, a.upload_wait, a.claim, a.zone,
-                     a.draft)
+                     a.draft, a.private)
 
 
 if __name__ == "__main__":
