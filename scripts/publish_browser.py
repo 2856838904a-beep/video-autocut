@@ -619,7 +619,9 @@ def wait_douyin_ready(page, size_mb: float = 0, max_sec: float = 1800) -> bool:
     up_done = False
     while _t.time() - t0 < max_sec:
         try:
-            txt = page.locator("body").inner_text()
+            # ★ 必须用 textContent:进度面板在填表/滚动后可能被 display:none 隐藏,
+            #   innerText 会漏掉它(实测导致误判"没进度"而提前发布)
+            txt = page.evaluate("() => document.body.textContent || ''")
         except Exception:
             txt = ""
         el = int(_t.time() - t0)
@@ -761,24 +763,52 @@ def douyin_set_cover(page, cover_path: str, profile: str = "") -> bool:
     if not cover_path or not os.path.exists(cover_path):
         return False
     try:
-        fi = page.locator("input[type=file][accept*='image']").first
-        if fi.count() == 0:
+        fi = page.locator("input[type=file][accept*='image']")
+        n = fi.count()
+        if n == 0:
             print("  ⚠️ 找不到封面图片输入框")
             return False
-        fi.set_input_files(cover_path)
+        # 长视频「设置封面」是必填项,不设会被拦(短片段会自动取首帧)
+        fi.nth(n - 1).set_input_files(cover_path)
         _t.sleep(3)
-        for kw in ("保存", "确定", "确认", "完成", "Save"):
+        # 等裁剪弹窗
+        for _ in range(15):
+            if page.locator(".semi-modal").count() > 0:
+                break
+            _t.sleep(1)
+        # 弹窗内点保存(必须精确匹配:弹窗里还有「取消保存」,模糊匹配会误点取消)
+        for kw in ("保存", "确定", "确认", "完成"):
             try:
-                b = page.locator(f"button:has-text('{kw}')").first
-                if b.count() > 0 and b.is_visible():
-                    b.click(timeout=3000)
-                    print(f"  封面已设置(裁剪确认: {kw})")
-                    _t.sleep(1.5)
+                b = page.locator(f".semi-modal button:text-is('{kw}')").first
+                if b.count() == 0 or not b.is_visible():
+                    # 兜底:JS 找 innerText 完全等于 kw 的按钮
+                    clicked = page.evaluate("""(kw) => {
+                        const b = [...document.querySelectorAll('.semi-modal button')]
+                            .find(x => (x.innerText||'').trim() === kw);
+                        if (b) { b.click(); return true; }
+                        return false;
+                    }""", kw)
+                    if not clicked:
+                        continue
+                else:
+                    b.click(timeout=5000)
+                _t.sleep(3)
+                if page.locator(".semi-modal").count() > 0:
+                    # 还有弹窗:可能又出现裁剪/确认步骤
+                    for kw2 in ("确定", "完成", "保存"):
+                        bb = page.locator(f".semi-modal button:text-is('{kw2}')").first
+                        if bb.count() > 0:
+                            bb.click(timeout=4000)
+                            _t.sleep(2)
+                            break
+                left = page.locator("text=选择封面").count()
+                print(f"  封面已设置(裁剪保存:{kw},剩余未设槽位 {left})")
+                if left <= 1:
                     return True
             except Exception:
                 continue
-        print("  封面已提交(未出现裁剪确认)")
-        return True
+        print("  ⚠️ 裁剪弹窗未确认")
+        return False
     except Exception as e:
         print("  ⚠️ 封面设置失败:", str(e)[:70])
         return False
@@ -1003,12 +1033,15 @@ def do_upload(profile: str, plat: str, file: str, title: str, desc: str,
                 if page.locator("input[placeholder*='填写作品标题']").count() > 0:
                     break
             dismiss_dialogs(page, profile, "dy2")
-            ok = douyin_fill(page, title, desc, tags, private, profile, cover)
+            # ★ 先等上传真正完成(再填表):填表会隐藏进度面板,顺序反了容易误判
             try:
                 size_mb = os.path.getsize(file) / 1e6
             except OSError:
                 size_mb = 0
             wait_douyin_ready(page, size_mb, upload_wait)
+            ok = douyin_fill(page, title, desc, tags, private, profile, "")
+            if cover:
+                douyin_set_cover(page, cover, profile)
             if schedule:
                 douyin_schedule(page, schedule, profile)
             if draft_mode:
